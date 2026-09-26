@@ -1,0 +1,62 @@
+# E-Fulfill Hub
+
+# Secrets — NEVER commit real credentials.
+# .env holds DATABASE_URL / JWT_SECRET / ENCRYPTION_KEY / SHOPEE_PARTNER_KEY.
+# Only the template .env.example is tracked.
+.env
+.env.*
+!.env.example
+
+# Production
+.next/
+out/
+build/
+*.tsbuildinfo
+.turbo/
+
+# Dependencies
+node_modules/
+
+# Prisma
+prisma/generated/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage/
+
+# Temporary / Scratch
+scratch_*.ts
+scratch_*.js
+scratch_*.mjs
+tmp-*.ts
+tmp-*.js
+tmp-*.cjs
+*.jfif
+# Artefak uji lokal: cookie jar, duplikat bukti, skrip probe, screenshot QA
+lt.txt
+lab1.bin
+logo.jfif
+decode-test.mjs
+camera-fix-proof.mjs
+*_barcode-bukti.png
+docs/screenshots/
+.dogfood-output/
+
+# Python bytecode (hasil kompilasi skrip deploy)
+__pycache__/
+*.py[cod]
+
+# Tangkapan layar verifikasi + catatan internal tidak untuk repo
+docs/screenshots/

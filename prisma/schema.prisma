@@ -1,0 +1,851 @@
+// E-Fulfill Hub — Prisma Schema
+// Based on: 06-DATA-MODEL.md
+// Architecture: Modular Monolith, Clean Architecture Inspired
+// Pattern: Tenant-isolated data model, Inventory Ledger, Explicit State Machines
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// IDENTITY & TENANT MODULE
+// ============================================================
+
+model Tenant {
+  id        String       @id @default(cuid())
+  name      String
+  slug      String       @unique
+  status    TenantStatus @default(ACTIVE)
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  memberships        TenantMembership[]
+  shops              Shop[]
+  warehouses         Warehouse[]
+  products           Product[]
+  orders             Order[]
+  priorityRules      PriorityRule[]
+  auditLogs          AuditLog[]
+  inventoryMovements InventoryMovement[]
+  syncRuns           SyncRun[]
+  webhookEvents      WebhookEvent[]
+
+  @@map("tenants")
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  INACTIVE
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  name         String
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  memberships          TenantMembership[]
+  auditLogs            AuditLog[]
+  inventoryMovements   InventoryMovement[]
+  pickingTasksAssigned PickingTask[]       @relation("PickingTaskAssignee")
+
+  @@map("users")
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+model TenantMembership {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  userId    String   @map("user_id")
+  role      UserRole
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId])
+  @@index([tenantId])
+  @@index([userId])
+  @@map("tenant_memberships")
+}
+
+enum UserRole {
+  OWNER
+  MANAGER
+  FINANCE
+  STAFF
+}
+
+// ============================================================
+// SHOP & WAREHOUSE
+// ============================================================
+
+model Shop {
+  id             String     @id @default(cuid())
+  tenantId       String     @map("tenant_id")
+  provider       String // e.g. "shopee", "tokopedia", "tiktok_shop"
+  name           String
+  externalShopId String?    @map("external_shop_id")
+  status         ShopStatus @default(ACTIVE)
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+
+  tenant                  Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  integrationConnections  IntegrationConnection[]
+  externalProductMappings ExternalProductMapping[]
+  orders                  Order[]
+  syncRuns                SyncRun[]
+  webhookEvents           WebhookEvent[]
+
+  @@index([tenantId])
+  @@map("shops")
+}
+
+enum ShopStatus {
+  ACTIVE
+  INACTIVE
+  DISCONNECTED
+}
+
+model Warehouse {
+  id        String          @id @default(cuid())
+  tenantId  String          @map("tenant_id")
+  name      String
+  code      String
+  address   String?
+  status    WarehouseStatus @default(ACTIVE)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  inventoryBalances  InventoryBalance[]
+  inventoryMovements InventoryMovement[]
+  stockReservations  StockReservation[]
+  fulfillmentOrders  FulfillmentOrder[]
+  stockLots          StockLot[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("warehouses")
+}
+
+enum WarehouseStatus {
+  ACTIVE
+  INACTIVE
+}
+
+// ============================================================
+// CATALOG MODULE
+// ============================================================
+
+model Product {
+  id          String        @id @default(cuid())
+  tenantId    String        @map("tenant_id")
+  name        String
+  description String?
+  category    String?
+  status      ProductStatus @default(ACTIVE)
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  variants ProductVariant[]
+
+  @@index([tenantId])
+  @@map("products")
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+model ProductVariant {
+  id        String               @id @default(cuid())
+  productId String               @map("product_id")
+  sku       String
+  barcode   String?
+  name      String
+  weight    Float? // gram
+  imageUrl  String?              @map("image_url")
+  status    ProductVariantStatus @default(ACTIVE)
+  createdAt DateTime             @default(now()) @map("created_at")
+  updatedAt DateTime             @updatedAt @map("updated_at")
+
+  product            Product                  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  externalMappings   ExternalProductMapping[]
+  inventoryBalances  InventoryBalance[]
+  inventoryMovements InventoryMovement[]
+  stockReservations  StockReservation[]
+  stockLots          StockLot[]
+  orderItems         OrderItem[]
+  pickingItems       PickingItem[]
+  returnItems        ReturnItem[]
+
+  @@unique([productId, sku])
+  @@index([productId])
+  @@index([sku])
+  @@index([barcode])
+  @@map("product_variants")
+}
+
+enum ProductVariantStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+model ExternalProductMapping {
+  id                String   @id @default(cuid())
+  shopId            String   @map("shop_id")
+  variantId         String   @map("variant_id")
+  externalProductId String   @map("external_product_id")
+  externalVariantId String   @map("external_variant_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  shop    Shop           @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, externalVariantId])
+  @@index([shopId])
+  @@index([variantId])
+  @@map("external_product_mappings")
+}
+
+// ============================================================
+// INVENTORY MODULE
+// ============================================================
+
+/// Inventory balance per warehouse per variant.
+/// available = onHand - reserved - blocked
+/// This is the single source of truth for stock levels.
+model InventoryBalance {
+  id          String   @id @default(cuid())
+  warehouseId String   @map("warehouse_id")
+  variantId   String   @map("variant_id")
+  onHand      Int      @default(0) @map("on_hand")
+  reserved    Int      @default(0)
+  blocked     Int      @default(0)
+  version     Int      @default(0) // optimistic locking
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  warehouse Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([warehouseId, variantId])
+  @@index([warehouseId])
+  @@index([variantId])
+  @@map("inventory_balances")
+}
+
+/// Immutable ledger of all stock changes.
+/// Never mutate existing records — only insert new ones.
+model InventoryMovement {
+  id            String       @id @default(cuid())
+  tenantId      String       @map("tenant_id")
+  warehouseId   String       @map("warehouse_id")
+  variantId     String       @map("variant_id")
+  movementType  MovementType @map("movement_type")
+  quantityDelta Int          @map("quantity_delta") // negative = deduction
+  referenceType String?      @map("reference_type") // e.g. "order", "return", "adjustment"
+  referenceId   String?      @map("reference_id")
+  reason        String?
+  actorId       String?      @map("actor_id")
+  /// Lot FIFO yang dikonsumsi (diisi untuk movement keluar).
+  stockLotId    String?      @map("stock_lot_id")
+  createdAt     DateTime     @default(now()) @map("created_at")
+
+  tenant    Tenant         @relation(fields: [tenantId], references: [id])
+  warehouse Warehouse      @relation(fields: [warehouseId], references: [id])
+  variant   ProductVariant @relation(fields: [variantId], references: [id])
+  actor     User?          @relation(fields: [actorId], references: [id])
+
+  @@index([tenantId])
+  @@index([warehouseId, variantId])
+  @@index([referenceType, referenceId])
+  @@index([createdAt])
+  @@map("inventory_movements")
+}
+
+enum MovementType {
+  RECEIVE // inbound stock
+  RESERVE // reservation created
+  RESERVE_RELEASE // reservation released
+  DEDUCTION // fulfillment stock deduction
+  ADJUSTMENT // manual adjustment
+  RETURN_RESTOCK // return restocked
+  RETURN_DAMAGED // return recorded as damaged
+  BLOCKED // blocked for audit/hold
+  UNBLOCKED // block released
+}
+
+/// Stock reservation for a specific order item.
+/// Ensures atomic, auditable hold on stock.
+model StockReservation {
+  id          String            @id @default(cuid())
+  warehouseId String            @map("warehouse_id")
+  variantId   String            @map("variant_id")
+  orderItemId String            @map("order_item_id")
+  quantity    Int
+  status      ReservationStatus @default(ACTIVE)
+  createdAt   DateTime          @default(now()) @map("created_at")
+  releasedAt  DateTime?         @map("released_at")
+
+  warehouse Warehouse      @relation(fields: [warehouseId], references: [id])
+  variant   ProductVariant @relation(fields: [variantId], references: [id])
+  orderItem OrderItem      @relation(fields: [orderItemId], references: [id])
+
+  @@index([warehouseId, variantId])
+  @@index([orderItemId])
+  @@index([status])
+  @@map("stock_reservations")
+}
+
+enum ReservationStatus {
+  ACTIVE
+  RELEASED
+  CONSUMED // converted to stock deduction
+}
+
+// ============================================================
+// ORDER MODULE
+// ============================================================
+
+model Order {
+  id                   String         @id @default(cuid())
+  tenantId             String         @map("tenant_id")
+  shopId               String         @map("shop_id")
+  externalOrderId      String         @map("external_order_id")
+  status               OrderStatus    @default(NEW)
+  placedAt             DateTime       @map("placed_at")
+  shipByAt             DateTime?      @map("ship_by_at")
+  buyerName            String?        @map("buyer_name")
+  buyerPhone           String?        @map("buyer_phone")
+  shippingAddress      Json?          @map("shipping_address")
+  buyerNote            String?        @map("buyer_note") @db.Text
+  // ── Rincian uang (diambil dari Shopee get_order_detail & order_income) ──
+  currency             String?        @map("currency")
+  /// Total yang dibayar pembeli (termasuk ongkir).
+  totalAmount          Float?         @map("total_amount")
+  /// Harga barang sebelum diskon.
+  itemSubtotal         Float?         @map("item_subtotal")
+  /// Diskon yang ditanggung PENJUAL.
+  sellerDiscount       Float?         @map("seller_discount")
+  /// Diskon yang ditanggung SHOPEE.
+  shopeeDiscount       Float?         @map("shopee_discount")
+  /// Ongkir yang dibayar pembeli.
+  buyerShippingFee     Float?         @map("buyer_shipping_fee")
+  /// Potongan ongkir (gratis ongkir / subsidi).
+  shippingFeeDiscount  Float?         @map("shipping_fee_discount")
+  /// Total potongan Shopee (komisi + biaya layanan).
+  platformFee          Float?         @map("platform_fee")
+  /// Estimasi uang yang masuk ke penjual.
+  escrowAmount         Float?         @map("escrow_amount")
+  paymentMethod        String?        @map("payment_method")
+  isCod                Boolean        @default(false) @map("is_cod")
+  paidAt               DateTime?      @map("paid_at")
+  packageNumber        String?        @map("package_number")
+  /// Rincian mentah dari Shopee (cadangan bila ada field baru).
+  incomeJson           Json?          @map("income_json")
+  // Priority fields
+  priorityScore        Float?         @map("priority_score")
+  priorityLevel        PriorityLevel? @map("priority_level")
+  priorityRuleVersion  String?        @map("priority_rule_version")
+  priorityFactors      Json?          @map("priority_factors") // explainable factors
+  priorityCalculatedAt DateTime?      @map("priority_calculated_at")
+  createdAt            DateTime       @default(now()) @map("created_at")
+  updatedAt            DateTime       @updatedAt @map("updated_at")
+
+  tenant            Tenant               @relation(fields: [tenantId], references: [id])
+  shop              Shop                 @relation(fields: [shopId], references: [id])
+  items             OrderItem[]
+  statusHistory     OrderStatusHistory[]
+  fulfillmentOrders FulfillmentOrder[]
+  shipments         Shipment[]
+  returns           Return[]
+
+  @@unique([shopId, externalOrderId])
+  @@index([tenantId])
+  @@index([status])
+  @@index([shipByAt])
+  @@index([priorityLevel])
+  @@map("orders")
+}
+
+/// Order lifecycle is intentionally narrow (04-DOMAIN-MODEL.md §3).
+/// The warehouse pipeline lives on FulfillmentOrder.status — NOT duplicated here.
+enum OrderStatus {
+  NEW // imported from marketplace, not yet actionable (e.g. Shopee UNPAID)
+  CONFIRMED // actionable: seller must fulfill (Shopee READY_TO_SHIP / PROCESSED / SHIPPED)
+  CANCELLED // cancelled (Shopee CANCELLED)
+  COMPLETED // fulfilled & closed (Shopee COMPLETED)
+}
+
+enum PriorityLevel {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+model OrderItem {
+  id                String          @id @default(cuid())
+  orderId           String          @map("order_id")
+  variantId         String          @map("variant_id")
+  quantity          Int
+  fulfilledQuantity Int             @default(0) @map("fulfilled_quantity")
+  unitPrice         Float?          @map("unit_price")
+  status            OrderItemStatus @default(PENDING)
+
+  order        Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variant      ProductVariant     @relation(fields: [variantId], references: [id])
+  reservations StockReservation[]
+
+  @@index([orderId])
+  @@index([variantId])
+  @@map("order_items")
+}
+
+enum OrderItemStatus {
+  PENDING
+  RESERVED
+  PICKED
+  PACKED
+  FULFILLED
+  CANCELLED
+}
+
+model OrderStatusHistory {
+  id         String       @id @default(cuid())
+  orderId    String       @map("order_id")
+  fromStatus OrderStatus? @map("from_status")
+  toStatus   OrderStatus  @map("to_status")
+  actorId    String?      @map("actor_id")
+  reason     String?
+  metadata   Json?
+  createdAt  DateTime     @default(now()) @map("created_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([createdAt])
+  @@map("order_status_history")
+}
+
+// ============================================================
+// FULFILLMENT MODULE
+// ============================================================
+
+model FulfillmentOrder {
+  id          String            @id @default(cuid())
+  orderId     String            @map("order_id")
+  warehouseId String            @map("warehouse_id")
+  status      FulfillmentStatus @default(READY_TO_PICK)
+  startedAt   DateTime?         @map("started_at")
+  completedAt DateTime?         @map("completed_at")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  order        Order         @relation(fields: [orderId], references: [id])
+  warehouse    Warehouse     @relation(fields: [warehouseId], references: [id])
+  pickingTasks PickingTask[]
+  packingTasks PackingTask[]
+
+  @@index([orderId])
+  @@index([warehouseId])
+  @@index([status])
+  @@map("fulfillment_orders")
+}
+
+enum FulfillmentStatus {
+  WAITING_STOCK // stock insufficient, reservation pending (09-FULFILLMENT-RULES.md §2)
+  READY_TO_PICK
+  PICKING
+  PICKED
+  PACKING
+  PACKED
+  READY_TO_SHIP
+  HANDED_OVER
+  COMPLETED
+  EXCEPTION
+}
+
+model PickingTask {
+  id                 String        @id @default(cuid())
+  fulfillmentOrderId String        @map("fulfillment_order_id")
+  status             PickingStatus @default(PENDING)
+  assignedToId       String?       @map("assigned_to")
+  startedAt          DateTime?     @map("started_at")
+  completedAt        DateTime?     @map("completed_at")
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+
+  fulfillmentOrder FulfillmentOrder @relation(fields: [fulfillmentOrderId], references: [id])
+  assignedTo       User?            @relation("PickingTaskAssignee", fields: [assignedToId], references: [id])
+  items            PickingItem[]
+
+  @@index([fulfillmentOrderId])
+  @@index([status])
+  @@map("picking_tasks")
+}
+
+enum PickingStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  EXCEPTION
+}
+
+model PickingItem {
+  id               String    @id @default(cuid())
+  pickingTaskId    String    @map("picking_task_id")
+  variantId        String    @map("variant_id")
+  expectedQuantity Int       @map("expected_quantity")
+  pickedQuantity   Int       @default(0) @map("picked_quantity")
+  isConfirmed      Boolean   @default(false) @map("is_confirmed")
+  scannedAt        DateTime? @map("scanned_at")
+
+  pickingTask PickingTask    @relation(fields: [pickingTaskId], references: [id], onDelete: Cascade)
+  variant     ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@index([pickingTaskId])
+  @@map("picking_items")
+}
+
+model PackingTask {
+  id                 String        @id @default(cuid())
+  fulfillmentOrderId String        @map("fulfillment_order_id")
+  status             PackingStatus @default(PENDING)
+  packedById         String?       @map("packed_by")
+  packedAt           DateTime?     @map("packed_at")
+  notes              String?
+  createdAt          DateTime      @default(now()) @map("created_at")
+
+  fulfillmentOrder FulfillmentOrder @relation(fields: [fulfillmentOrderId], references: [id])
+
+  @@index([fulfillmentOrderId])
+  @@map("packing_tasks")
+}
+
+enum PackingStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+}
+
+// ============================================================
+// SHIPPING MODULE
+// ============================================================
+
+model Shipment {
+  id          String         @id @default(cuid())
+  orderId     String         @map("order_id")
+  awb         String? // Air Waybill / resi
+  carrier     String?
+  status      ShipmentStatus @default(PENDING)
+  shippedAt   DateTime?      @map("shipped_at")
+  deliveredAt DateTime?      @map("delivered_at")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  order  Order           @relation(fields: [orderId], references: [id])
+  events ShipmentEvent[]
+
+  @@index([orderId])
+  @@index([awb])
+  @@map("shipments")
+}
+
+enum ShipmentStatus {
+  PENDING
+  READY_TO_SHIP
+  PICKED_UP
+  IN_TRANSIT
+  DELIVERED
+  FAILED
+  RETURNED
+}
+
+model ShipmentEvent {
+  id              String   @id @default(cuid())
+  shipmentId      String   @map("shipment_id")
+  externalEventId String?  @map("external_event_id")
+  status          String // carrier-defined status string
+  description     String?
+  occurredAt      DateTime @map("occurred_at")
+  rawReference    Json?    @map("raw_reference")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@unique([shipmentId, externalEventId])
+  @@index([shipmentId])
+  @@index([createdAt])
+  @@map("shipment_events")
+}
+
+// ============================================================
+// RETURNS MODULE
+// ============================================================
+
+model Return {
+  id               String       @id @default(cuid())
+  orderId          String       @map("order_id")
+  externalReturnId String?      @map("external_return_id")
+  status           ReturnStatus @default(REQUESTED)
+  reason           String?
+  receivedAt       DateTime?    @map("received_at")
+  /// Kapan paket retur benar-benar tiba di gudang. Stok hanya boleh bertambah
+  /// setelah timestamp ini terisi, bukan saat status Shopee berubah.
+  arrivedAt        DateTime?    @map("arrived_at")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  order Order        @relation(fields: [orderId], references: [id])
+  items ReturnItem[]
+
+  @@index([orderId])
+  @@index([status])
+  @@map("returns")
+}
+
+enum ReturnStatus {
+  REQUESTED
+  IN_TRANSIT
+  /// Paket retur benar-benar sudah sampai di gudang (bukan sekadar status Shopee).
+  ARRIVED
+  RECEIVED
+  INSPECTION
+  RESTOCKED
+  DAMAGED
+  REJECTED
+  CLOSED
+}
+
+model ReturnItem {
+  id               String            @id @default(cuid())
+  returnId         String            @map("return_id")
+  variantId        String            @map("variant_id")
+  quantity         Int
+  /// Berapa unit yang benar-benar dipindai sudah datang di gudang.
+  /// Stok retur hanya bertambah dari angka ini, bukan dari status Shopee.
+  scannedQuantity  Int               @default(0) @map("scanned_quantity")
+  scannedAt        DateTime?         @map("scanned_at")
+  inspectionResult InspectionResult? @map("inspection_result")
+  inspectedAt      DateTime?         @map("inspected_at")
+  notes            String?
+
+  return  Return         @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@index([returnId])
+  @@map("return_items")
+}
+
+enum InspectionResult {
+  SELLABLE
+  DAMAGED
+  PARTIAL
+  REJECTED
+}
+
+// ============================================================
+// INTEGRATION MODULE
+// ============================================================
+
+model IntegrationConnection {
+  id                   String           @id @default(cuid())
+  shopId               String           @map("shop_id")
+  provider             String
+  /// AES-256-GCM encrypted JSON: { shop_id, access_token, refresh_token, token_expires_at, main_account_id? }
+  /// Never store plaintext tokens (10-SECURITY.md, FR-INT-001).
+  encryptedCredentials String?          @map("encrypted_credentials") @db.Text
+  sandbox              Boolean          @default(false)
+  status               ConnectionStatus @default(PENDING)
+  lastSyncAt           DateTime?        @map("last_sync_at")
+  createdAt            DateTime         @default(now()) @map("created_at")
+  updatedAt            DateTime         @updatedAt @map("updated_at")
+
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, provider])
+  @@index([shopId])
+  @@map("integration_connections")
+}
+
+enum ConnectionStatus {
+  ACTIVE
+  INACTIVE
+  ERROR
+  PENDING
+}
+
+model SyncRun {
+  id             String     @id @default(cuid())
+  tenantId       String     @map("tenant_id")
+  shopId         String     @map("shop_id")
+  operation      String // e.g. "import_orders", "sync_products", "sync_tracking"
+  startedAt      DateTime   @default(now()) @map("started_at")
+  finishedAt     DateTime?  @map("finished_at")
+  status         SyncStatus @default(RUNNING)
+  recordsRead    Int        @default(0) @map("records_read")
+  recordsWritten Int        @default(0) @map("records_written")
+  errorCode      String?    @map("error_code")
+  errorMessage   String?    @map("error_message")
+  /// Detail non-tabular, mis. daftar SKU yang belum ter-mapping.
+  metadataJson   Json?      @map("metadata_json")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  shop   Shop   @relation(fields: [shopId], references: [id])
+
+  @@index([tenantId])
+  @@index([shopId])
+  @@index([status])
+  @@index([startedAt])
+  @@map("sync_runs")
+}
+
+enum SyncStatus {
+  RUNNING
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+model WebhookEvent {
+  id              String             @id @default(cuid())
+  tenantId        String             @map("tenant_id")
+  shopId          String             @map("shop_id")
+  provider        String
+  externalEventId String             @map("external_event_id")
+  eventType       String             @map("event_type")
+  payloadHash     String             @map("payload_hash")
+  status          WebhookEventStatus @default(PENDING)
+  processedAt     DateTime?          @map("processed_at")
+  errorMessage    String?            @map("error_message")
+  createdAt       DateTime           @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  shop   Shop   @relation(fields: [shopId], references: [id])
+
+  @@unique([shopId, provider, externalEventId])
+  @@index([tenantId])
+  @@index([shopId])
+  @@index([status])
+  @@map("webhook_events")
+}
+
+enum WebhookEventStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+  SKIPPED // duplicate
+}
+
+// ============================================================
+// CONFIGURATION MODULE
+// ============================================================
+
+/// Priority rule versioning — configurable and explainable (ADR-005)
+model PriorityRule {
+  id           String   @id @default(cuid())
+  tenantId     String   @map("tenant_id")
+  version      String // e.g. "priority-v1"
+  isEnabled    Boolean  @default(true) @map("is_enabled")
+  criteriaJson Json     @map("criteria_json")
+  description  String?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, version])
+  @@index([tenantId, isEnabled])
+  @@map("priority_rules")
+}
+
+// ============================================================
+// AUDIT MODULE
+// ============================================================
+
+/// Immutable audit trail of all significant actions.
+/// Never update or delete audit records.
+model AuditLog {
+  id           String   @id @default(cuid())
+  tenantId     String   @map("tenant_id")
+  actorId      String?  @map("actor_id")
+  action       String // e.g. "reserve_stock", "order_status_change"
+  entityType   String   @map("entity_type")
+  entityId     String   @map("entity_id")
+  metadataJson Json?    @map("metadata_json")
+  ipAddress    String?  @map("ip_address")
+  userAgent    String?  @map("user_agent")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  actor  User?  @relation(fields: [actorId], references: [id])
+
+  @@index([tenantId])
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+/// Konfigurasi aplikasi partner marketplace yang DIKELOLA DARI UI (bukan edit .env).
+/// Satu baris per provider. Partner Key selalu disimpan terenkripsi AES-256-GCM.
+/// Kalau baris ini kosong, sistem jatuh ke kredensial .env (backward compatible).
+model MarketplaceAppConfig {
+  id                  String   @id @default(cuid())
+  provider            String   @unique // "shopee"
+  mode                String   @default("PRODUCTION") // PRODUCTION | SANDBOX
+  partnerId           String   @map("partner_id")
+  partnerKeyEncrypted String   @map("partner_key_encrypted") @db.Text
+  redirectUrl         String?  @map("redirect_url")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@map("marketplace_app_configs")
+}
+
+/// Lot/batch stok fisik gudang — dasar alokasi FIFO.
+/// Barang yang MASUK lebih dulu (receivedAt paling lama) dikonsumsi lebih dulu.
+/// Catatan penting: stok di Shopee TIDAK dipakai sebagai kebenaran, karena seller
+/// boleh mengisi angka stok apa pun di Seller Center. Kebenaran stok ada di sini.
+model StockLot {
+  id          String   @id @default(cuid())
+  warehouseId String   @map("warehouse_id")
+  variantId   String   @map("variant_id")
+  receivedAt  DateTime @default(now()) @map("received_at")
+  quantity    Int
+  remaining   Int
+  /// RECEIVE (barang masuk) | ADJUSTMENT | RETURN | OPENING (saldo awal sebelum lot aktif)
+  source      String   @default("RECEIVE")
+  referenceId String?  @map("reference_id")
+  notes       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  warehouse Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@index([warehouseId, variantId, receivedAt])
+  @@index([remaining])
+  @@map("stock_lots")
+}

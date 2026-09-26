@@ -1,0 +1,32 @@
+{
+  "name": "e-fulfill-hub",
+  "type": "modular-monolith",
+  "research_focus": "integrated e-commerce fulfillment with configurable order prioritization",
+  "mvp": [
+    "auth",
+    "multi_tenant",
+    "inventory",
+    "orders",
+    "reservation",
+    "priority",
+    "picking",
+    "scanning",
+    "packing",
+    "shipping",
+    "returns",
+    "audit",
+    "integration_boundary"
+  ],
+  "architecture": "clean-architecture-inspired modular monolith",
+  "security_baseline": "OWASP ASVS Level 2",
+  "architecture_documentation": "C4",
+  "provider_integration_status": "FEASIBILITY_GATE_REQUIRED",
+  "principles": [
+    "configurable",
+    "provider-agnostic-core",
+    "idempotent",
+    "auditable",
+    "testable",
+    "maintainable"
+  ]
+}
