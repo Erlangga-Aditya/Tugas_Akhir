@@ -1,0 +1,18 @@
+-- Simpan JUMLAH paket dari Shopee saat pesanan diimpor.
+--
+-- ALASAN
+-- -----
+-- Aturan `package_number` pada endpoint Shopee berbeda antara pesanan satu
+-- paket dan pesanan yang dipecah beberapa paket. Bukti sandbox 2026-09-26:
+--
+--   * Satu paket  -> ship_order DITOLAK bila package_number dikirim:
+--     `logistics.ship_order_not_need_pacakge_number`
+--     ("Please don't request with package_number for this unsplit order")
+--   * Multi paket -> package_number WAJIB, tanpa itu:
+--     `logistics.package_not_exist`
+--
+-- Sebelumnya aplikasi selalu mengirim `package_number`, sehingga setiap pesanan
+-- satu paket gagal dengan pesan yang tidak bisa ditindaklanjuti operator.
+-- Menyimpan jumlah paket membuat keputusan itu berdasar data Shopee, bukan
+-- tebakan.
+ALTER TABLE `orders` ADD COLUMN `package_count` INT NULL;

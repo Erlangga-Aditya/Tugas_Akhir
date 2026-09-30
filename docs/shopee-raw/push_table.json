@@ -1,0 +1,1166 @@
+[
+ {
+  "push_api_id": 22,
+  "push_code": 18,
+  "name": "supplier_create_product_push",
+  "category": "Consignment Service Push",
+  "app_rules": [
+   13
+  ],
+  "retry_strategy": [
+   1,
+   3,
+   5
+  ],
+  "timeout": 3,
+  "top_params": [
+   "code",
+   "timestamp",
+   "supplier_id",
+   "data"
+  ],
+  "children": {
+   "data": [
+    "supplier_product_id",
+    "supplier_product_model_id_list",
+    "create_time"
+   ]
+  }
+ },
+ {
+  "push_api_id": 23,
+  "push_code": 19,
+  "name": "supplier_prouduct_review_result_push",
+  "category": "Consignment Service Push",
+  "app_rules": [
+   13
+  ],
+  "retry_strategy": [
+   1,
+   3,
+   5
+  ],
+  "timeout": 3,
+  "top_params": [
+   "code",
+   "timestamp",
+   "data",
+   "supplier_id"
+  ],
+  "children": {
+   "data": [
+    "supplier_product_id",
+    "supplier_product_model_id",
+    "approval_result",
+    "approval_time"
+   ]
+  }
+ },
+ {
+  "push_api_id": 24,
+  "push_code": 20,
+  "name": "purchase_order_Push",
+  "category": "Consignment Service Push",
+  "app_rules": [
+   13
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "code",
+   "timestamp",
+   "supplier_id",
+   "data"
+  ],
+  "children": {
+   "data": [
+    "purchase_order_id",
+    "purchase_order_status",
+    "purchase_reason",
+    "purchase_function_tag_list",
+    "create_time"
+   ]
+  }
+ },
+ {
+  "push_api_id": 20,
+  "push_code": 21,
+  "name": "inbound_status_push",
+  "category": "Consignment Service Push",
+  "app_rules": [
+   13
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "code",
+   "timestamp",
+   "supplier_id",
+   "data"
+  ],
+  "children": {
+   "data": [
+    "inbound_id",
+    "inbound_status"
+   ]
+  }
+ },
+ {
+  "push_api_id": 41,
+  "push_code": 31,
+  "name": "fbs_br_invoice_issued_push",
+  "category": "Fulfillment by Shopee Push",
+  "app_rules": [
+   2,
+   3
+  ],
+  "retry_strategy": [
+   30,
+   600,
+   1800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "update_time",
+   "shop_id",
+   "code"
+  ],
+  "children": {
+   "data": [
+    "document_type",
+    "order_sn",
+    "issue_date"
+   ]
+  }
+ },
+ {
+  "push_api_id": 38,
+  "push_code": 33,
+  "name": "fbs_br_invoice_error_push",
+  "category": "Fulfillment by Shopee Push",
+  "app_rules": [
+   2,
+   3
+  ],
+  "retry_strategy": [
+   60,
+   300,
+   1800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "code",
+   "timestamp",
+   "shop_id",
+   "data"
+  ],
+  "children": {
+   "data": [
+    "shop_id",
+    "biz_request_type",
+    "biz_request_id",
+    "fail_reason",
+    "fail_type",
+    "invoice_deadline_time",
+    "invoice_id",
+    "shop_sku_list"
+   ]
+  }
+ },
+ {
+  "push_api_id": 39,
+  "push_code": 34,
+  "name": "fbs_br_block_shop_push",
+  "category": "Fulfillment by Shopee Push",
+  "app_rules": [
+   2,
+   3
+  ],
+  "retry_strategy": [
+   60,
+   300,
+   1800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "code",
+   "timestamp",
+   "shop_id",
+   "data"
+  ],
+  "children": {
+   "data": [
+    "shop_id"
+   ]
+  }
+ },
+ {
+  "push_api_id": 40,
+  "push_code": 35,
+  "name": "fbs_br_block_sku_push",
+  "category": "Fulfillment by Shopee Push",
+  "app_rules": [
+   2,
+   3
+  ],
+  "retry_strategy": [
+   60,
+   300,
+   1800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "code",
+   "timestamp",
+   "shop_id",
+   "data"
+  ],
+  "children": {
+   "data": [
+    "shop_sku_id",
+    "shop_item_id",
+    "shop_model_id",
+    "shop_item_name",
+    "shop_model_name"
+   ]
+  }
+ },
+ {
+  "push_api_id": 36,
+  "push_code": 36,
+  "name": "fbs_sellable_stock",
+  "category": "Fulfillment by Shopee Push",
+  "app_rules": [
+   2,
+   3
+  ],
+  "retry_strategy": [
+   60,
+   300,
+   1800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "list"
+   ]
+  }
+ },
+ {
+  "push_api_id": 6,
+  "push_code": 7,
+  "name": "item_promotion_push",
+  "category": "Marketing Push",
+  "app_rules": [
+   1,
+   2,
+   3,
+   4,
+   7,
+   11,
+   18
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "shop_id",
+    "item_id",
+    "variation_id",
+    "promotion_type",
+    "promotion_id",
+    "action",
+    "update_time",
+    "start_time",
+    "end_time",
+    "reserved_stock"
+   ]
+  }
+ },
+ {
+  "push_api_id": 7,
+  "push_code": 9,
+  "name": "promotion_update_push",
+  "category": "Marketing Push",
+  "app_rules": [
+   1,
+   2,
+   3,
+   4,
+   7,
+   11,
+   18
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "shop_id",
+    "promotion_id",
+    "promotion_type",
+    "end_time",
+    "action",
+    "item_id",
+    "variation_id"
+   ]
+  }
+ },
+ {
+  "push_api_id": 1,
+  "push_code": 3,
+  "name": "order_status_push",
+  "category": "Order Push",
+  "app_rules": [
+   1,
+   2,
+   3,
+   5,
+   8,
+   18
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "ordersn",
+    "status",
+    "completed_scenario",
+    "update_time"
+   ]
+  }
+ },
+ {
+  "push_api_id": 2,
+  "push_code": 4,
+  "name": "order_trackingno_push",
+  "category": "Order Push",
+  "app_rules": [
+   1,
+   2,
+   3,
+   5,
+   18
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "ordersn",
+    "forder_id",
+    "package_number",
+    "tracking_no"
+   ]
+  }
+ },
+ {
+  "push_api_id": 17,
+  "push_code": 15,
+  "name": "shipping_document_status_push",
+  "category": "Order Push",
+  "app_rules": [
+   1,
+   2,
+   3,
+   5,
+   18
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "order_sn",
+    "package_number",
+    "status"
+   ]
+  }
+ },
+ {
+  "push_api_id": 26,
+  "push_code": 23,
+  "name": "booking_status_push",
+  "category": "Order Push",
+  "app_rules": [
+   1,
+   2,
+   3,
+   5,
+   18
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "booking_sn",
+    "booking_status",
+    "update_time"
+   ]
+  }
+ },
+ {
+  "push_api_id": 27,
+  "push_code": 24,
+  "name": "booking_trackingno_push",
+  "category": "Order Push",
+  "app_rules": [
+   1,
+   2,
+   3,
+   5,
+   18
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "booking_sn",
+    "tracking_number"
+   ]
+  }
+ },
+ {
+  "push_api_id": 28,
+  "push_code": 25,
+  "name": "booking_shipping_document_status_push",
+  "category": "Order Push",
+  "app_rules": [
+   1,
+   2,
+   3,
+   5,
+   18
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "booking_sn",
+    "status"
+   ]
+  }
+ },
+ {
+  "push_api_id": 33,
+  "push_code": 30,
+  "name": "package_fulfillment_status_push",
+  "category": "Order Push",
+  "app_rules": [
+   2,
+   3,
+   5,
+   18
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "ordersn",
+    "package_number",
+    "fulfillment_status",
+    "update_time"
+   ]
+  }
+ },
+ {
+  "push_api_id": 34,
+  "push_code": 37,
+  "name": "courier_delivery_binding_status_push",
+  "category": "Order Push",
+  "app_rules": [
+   2,
+   3,
+   5,
+   18
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "binding_id",
+    "first_mile_tracking_number",
+    "status",
+    "update_time"
+   ]
+  }
+ },
+ {
+  "push_api_id": 44,
+  "push_code": 47,
+  "name": "package_info_push",
+  "category": "Order Push",
+  "app_rules": [
+   2,
+   3,
+   5,
+   18
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "shop_id",
+   "code",
+   "timestamp",
+   "data"
+  ],
+  "children": {
+   "data": [
+    "order_sn",
+    "package_number",
+    "changed_fields",
+    "old",
+    "new",
+    "update_time"
+   ]
+  }
+ },
+ {
+  "push_api_id": 5,
+  "push_code": 8,
+  "name": "reserved_stock_change_push",
+  "category": "Product Push",
+  "app_rules": [
+   1,
+   2,
+   3,
+   4,
+   7,
+   11,
+   18
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "shop_id",
+    "item_id",
+    "variation_id",
+    "changed_values",
+    "promotion_type",
+    "promotion_id",
+    "action",
+    "ordersn",
+    "update_time"
+   ]
+  }
+ },
+ {
+  "push_api_id": 11,
+  "push_code": 11,
+  "name": "video_upload_push",
+  "category": "Product Push",
+  "app_rules": [
+   2,
+   3,
+   4,
+   18
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "video_upload_id",
+    "status",
+    "message",
+    "video_info"
+   ]
+  }
+ },
+ {
+  "push_api_id": 13,
+  "push_code": 13,
+  "name": "brand_register_result",
+  "category": "Product Push",
+  "app_rules": [
+   2,
+   3,
+   4,
+   18
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "shop_id",
+    "register_brand",
+    "register_result"
+   ]
+  }
+ },
+ {
+  "push_api_id": 18,
+  "push_code": 16,
+  "name": "violation_item_push",
+  "category": "Product Push",
+  "app_rules": [
+   2,
+   3,
+   4,
+   7,
+   18
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "item_id",
+    "item_name",
+    "item_status",
+    "deboost",
+    "item_status_details",
+    "deboost_details"
+   ]
+  }
+ },
+ {
+  "push_api_id": 25,
+  "push_code": 22,
+  "name": "item_price_update_push",
+  "category": "Product Push",
+  "app_rules": [
+   2,
+   3,
+   4,
+   18
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "item_id",
+    "model_id",
+    "update_field",
+    "old_value",
+    "new_value",
+    "update_time"
+   ]
+  }
+ },
+ {
+  "push_api_id": 30,
+  "push_code": 27,
+  "name": "item_scheduled_publish_failed_push",
+  "category": "Product Push",
+  "app_rules": [
+   2,
+   3,
+   4,
+   18
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "shop_id",
+    "item_id",
+    "scheduled_publish_time"
+   ]
+  }
+ },
+ {
+  "push_api_id": 32,
+  "push_code": 29,
+  "name": "return_updates_push",
+  "category": "Return Push",
+  "app_rules": [
+   2,
+   3,
+   5,
+   8,
+   17,
+   18
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "order_sn",
+    "return_sn",
+    "updated_values"
+   ]
+  }
+ },
+ {
+  "push_api_id": 15,
+  "push_code": 1,
+  "name": "shop_authorization_push",
+  "category": "Shopee Push",
+  "app_rules": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   11,
+   12,
+   13,
+   14,
+   15,
+   18,
+   19,
+   20,
+   21,
+   22,
+   23,
+   24
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "partner_id",
+   "code",
+   "timestamp",
+   "data"
+  ],
+  "children": {
+   "data": [
+    "shop_id",
+    "shop_id_list",
+    "merchant_id",
+    "merchant_id_list",
+    "authorize_type",
+    "extra",
+    "main_account_id",
+    "success"
+   ]
+  }
+ },
+ {
+  "push_api_id": 16,
+  "push_code": 2,
+  "name": "shop_authorization_canceled_push",
+  "category": "Shopee Push",
+  "app_rules": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   11,
+   12,
+   13,
+   14,
+   15,
+   18,
+   19,
+   20,
+   21,
+   22,
+   23,
+   24
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "partner_id",
+   "code",
+   "timestamp",
+   "data"
+  ],
+  "children": {
+   "data": [
+    "shop_id",
+    "shop_id_list",
+    "merchant_id",
+    "merchant_id_list",
+    "user_id",
+    "user_id_list",
+    "authorize_type",
+    "extra",
+    "main_account_id",
+    "success"
+   ]
+  }
+ },
+ {
+  "push_api_id": 3,
+  "push_code": 5,
+  "name": "shopee_updates",
+  "category": "Shopee Push",
+  "app_rules": [
+   1,
+   2,
+   3,
+   8,
+   10,
+   11,
+   12,
+   13,
+   15,
+   18,
+   19,
+   21,
+   22,
+   24
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "code",
+   "timestamp",
+   "shop_id",
+   "data"
+  ],
+  "children": {
+   "data": [
+    "actions"
+   ]
+  }
+ },
+ {
+  "push_api_id": 12,
+  "push_code": 12,
+  "name": "open_api_authorization_expiry",
+  "category": "Shopee Push",
+  "app_rules": [
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   11,
+   12,
+   13,
+   14,
+   15,
+   18,
+   19,
+   20,
+   21,
+   22,
+   23,
+   24
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "code",
+   "timestamp",
+   "data"
+  ],
+  "children": {
+   "data": [
+    "merchant_expire_soon",
+    "shop_expire_soon",
+    "user_expire_soon",
+    "expire_before",
+    "page_no",
+    "total_page"
+   ]
+  }
+ },
+ {
+  "push_api_id": 31,
+  "push_code": 28,
+  "name": "shop_penalty_update_push",
+  "category": "Shopee Push",
+  "app_rules": [
+   3,
+   4,
+   5,
+   2,
+   18,
+   19,
+   21,
+   22,
+   24
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "action_type",
+    "points_issued_data",
+    "points_removed_data",
+    "tier_update_data",
+    "update_time"
+   ]
+  }
+ },
+ {
+  "push_api_id": 43,
+  "push_code": 38,
+  "name": "video_upload_result_push",
+  "category": "Shopee Push",
+  "app_rules": [
+   2,
+   3,
+   4,
+   8,
+   13,
+   22
+  ],
+  "retry_strategy": [
+   300,
+   1800,
+   10800
+  ],
+  "timeout": 3,
+  "top_params": [
+   "data",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "video_upload_id",
+    "status",
+    "reason",
+    "video_info",
+    "update_time"
+   ]
+  }
+ },
+ {
+  "push_api_id": 10,
+  "push_code": 10,
+  "name": "webchat_push",
+  "category": "Webchat Push",
+  "app_rules": [
+   3,
+   8,
+   1,
+   16
+  ],
+  "retry_strategy": [
+   1,
+   2,
+   3
+  ],
+  "timeout": 2,
+  "top_params": [
+   "data",
+   "shop_id",
+   "code",
+   "timestamp"
+  ],
+  "children": {
+   "data": [
+    "type",
+    "region",
+    "content"
+   ]
+  }
+ }
+]
