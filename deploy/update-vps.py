@@ -22,6 +22,11 @@ import sys
 import tarfile
 from pathlib import Path
 
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 import paramiko
 
 REPO = Path(__file__).resolve().parents[1]
@@ -43,7 +48,7 @@ if not PASSWORD:
 
 def run(client: paramiko.SSHClient, cmd: str, label: str = "") -> str:
     if label:
-        print(f"\n── {label} ──", flush=True)
+        print(f"\n=== {label} ===", flush=True)
     _in, out, err = client.exec_command(cmd, timeout=3600)
     text = ""
     for line in iter(out.readline, ""):
@@ -57,18 +62,19 @@ def run(client: paramiko.SSHClient, cmd: str, label: str = "") -> str:
 
 
 def build_tarball() -> bytes:
-    skip_dirs = {"node_modules", ".next", ".git", "__pycache__", ".vitest", "coverage"}
-    skip_files = {".env", ".env.local", ".env.production"}
+    skip_dirs = {"node_modules", ".next", ".git", "__pycache__", ".vitest", "coverage", ".agents", "dist"}
+    skip_files = {".env", ".env.local", ".env.production", ".DS_Store"}
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for path in REPO.rglob("*"):
-            rel = path.relative_to(REPO)
-            if set(rel.parts) & skip_dirs:
-                continue
-            if path.name in skip_files:
-                continue
-            if path.is_file():
-                tar.add(path, arcname=str(rel).replace("\\", "/"))
+        for root, dirs, files in os.walk(REPO):
+            dirs[:] = [d for d in dirs if d not in skip_dirs]
+            rel_root = Path(root).relative_to(REPO)
+            for file in files:
+                if file in skip_files or file.endswith((".log", ".tmp")):
+                    continue
+                file_path = Path(root) / file
+                rel_path = rel_root / file
+                tar.add(file_path, arcname=str(rel_path).replace("\\", "/"))
     return buf.getvalue()
 
 
@@ -164,7 +170,7 @@ def main() -> None:
             "",
         )
     else:
-        print("\n── 2/5 Memasang dependensi dilewati (dependensi sudah sesuai) ──")
+        print("\n=== 2/5 Memasang dependensi dilewati (dependensi sudah sesuai) ===")
 
     run(client, f"cd {APP_DIR} && npx prisma generate", "3/5 Menyiapkan Prisma")
     run(client, f"cd {APP_DIR} && npx prisma migrate deploy", "   migrasi database")
@@ -185,7 +191,7 @@ def main() -> None:
     run(client, f"cd {APP_DIR} && rm -rf .next && npm run build", "4/5 Build produksi")
     run(client, "pm2 restart efulfill && sleep 5 && pm2 status", "5/5 Menyalakan ulang aplikasi")
 
-    print("\n── Pemeriksaan ──")
+    print("\n=== Pemeriksaan ===")
     print("   aplikasi lokal :", run(client, "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/login", "").strip())
 
     sftp.close()

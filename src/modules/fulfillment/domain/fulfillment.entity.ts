@@ -19,15 +19,16 @@ export type FulfillmentStatus =
   | 'EXCEPTION';
 
 const FULFILLMENT_TRANSITIONS: Record<FulfillmentStatus, FulfillmentStatus[]> = {
-  WAITING_STOCK: ['READY_TO_PICK'],
-  READY_TO_PICK: ['PICKING'],
+  WAITING_STOCK: ['READY_TO_PICK', 'EXCEPTION'],
+  READY_TO_PICK: ['PICKING', 'EXCEPTION'],
   PICKING: ['PICKED', 'EXCEPTION'],
-  PICKED: ['PACKING', 'PACKED'],
+  PICKED: ['PACKING', 'PACKED', 'EXCEPTION'],
   PACKING: ['PACKED', 'EXCEPTION'],
-  PACKED: ['READY_TO_SHIP'],
-  READY_TO_SHIP: ['HANDED_OVER'],
-  HANDED_OVER: ['COMPLETED'],
+  PACKED: ['READY_TO_SHIP', 'EXCEPTION'],
+  READY_TO_SHIP: ['HANDED_OVER', 'EXCEPTION'],
+  HANDED_OVER: ['COMPLETED', 'EXCEPTION'],
   COMPLETED: [],
+  // Pesanan dibatalkan bisa kembali ke antrean kalau dibuka ulang.
   EXCEPTION: ['WAITING_STOCK', 'READY_TO_PICK', 'PICKING', 'PACKING'],
 };
 

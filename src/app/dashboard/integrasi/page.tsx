@@ -578,8 +578,8 @@ export default function IntegrasiPage() {
      aplikasi Shopee atau menghubungkan ulang toko.
     </p>
    {/* Step-by-step guide and Shopee Console Location */}
-   <div className="card mb24" style={{ borderLeft: '4px solid var(--primary, #0284c7)' }}>
-    <h2 style={{ fontSize: 16, fontWeight: 800, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+   <div className="mb24" style={{ borderLeft: '4px solid var(--primary)', paddingLeft: 12 }}>
+    <h2 style={{ fontSize: 16, fontWeight: 800, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
      <span>Panduan Shopee Open Platform (Individual Seller)</span>
     </h2>
     <div style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--on-surface)' }}>
@@ -598,8 +598,20 @@ export default function IntegrasiPage() {
       </li>
       <li>
        Di bagian <strong>Redirect URL</strong> pada App Management, daftarkan URL berikut:
-       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
-        <code className="mono" style={{ background: 'var(--surface-low, #f1f5f9)', padding: '6px 10px', borderRadius: 6, fontSize: 12, border: '1px solid var(--outline-variant, #cbd5e1)' }}>
+       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <code
+         className="mono"
+         style={{
+          flex: '1 1 220px',
+          minWidth: 0,
+          wordBreak: 'break-all',
+          background: 'var(--surface-low)',
+          padding: '6px 10px',
+          borderRadius: 6,
+          fontSize: 12,
+          border: '1px solid var(--outline-variant)',
+         }}
+        >
          {typeof window !== 'undefined' ? `${window.location.origin}/api/v1/integrations/shopee/callback` : 'http://localhost:3000/api/v1/integrations/shopee/callback'}
         </code>
         <button
@@ -607,8 +619,8 @@ export default function IntegrasiPage() {
          className="btn btn-secondary btn-sm"
          onClick={() => {
           const url = `${window.location.origin}/api/v1/integrations/shopee/callback`;
-          navigator.clipboard.writeText(url);
-          alert('Redirect URL berhasil disalin ke clipboard!');
+          void navigator.clipboard.writeText(url);
+          setNotice({ tone: 'info', text: 'Redirect URL disalin ke clipboard.' });
          }}
         >
          Salin URL
@@ -632,7 +644,7 @@ export default function IntegrasiPage() {
        </span>
       </li>
      </ol>
-     <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#166534' }}>
+     <div style={{ background: 'var(--success-container)', border: '1px solid var(--success-border)', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: 'var(--on-success-container)' }}>
       <strong>Alur Sinkronisasi Otomatis:</strong> Setelah otorisasi berhasil, webhook Shopee dan SSE otomatis aktif. Setiap ada pesanan checkout masuk di toko Shopee Anda, sistem akan langsung menampilkannya di dashboard tanpa perlu klik manual.
      </div>
     </div>
@@ -754,7 +766,7 @@ export default function IntegrasiPage() {
           {health.unmappedSkus.length > 8 ? ` (+${health.unmappedSkus.length - 8} lagi)` : ''}
          </span>
         )}
-        <span>Klik tombol &quot;Sinkronkan Produk&quot; di bawah supaya pesanan itu bisa masuk.</span>
+        <span>Produk dari toko Anda disinkronkan otomatis setiap kali toko diotorisasi ulang. Kalau daftar ini tidak berubah, buka kembali halaman ini beberapa saat lagi.</span>
        </div>
       </Alert>
      </div>

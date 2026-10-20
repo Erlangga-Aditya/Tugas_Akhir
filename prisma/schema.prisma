@@ -345,6 +345,22 @@ model Order {
   shopId               String         @map("shop_id")
   externalOrderId      String         @map("external_order_id")
   status               OrderStatus    @default(NEW)
+  /// Status pesanan MENTAH dari marketplace (mis. `READY_TO_SHIP`, `PROCESSED`,
+  /// `SHIPPED`, `IN_CANCEL`). Disimpan karena `status` internal memetakan
+  /// beberapa status Shopee ke `CONFIRMED` sekaligus, sehingga beda antara
+  /// "Belum diproses" (READY_TO_SHIP) dan "Telah diproses" (PROCESSED) hilang.
+  externalStatus       String?        @map("external_status")
+  /// Pelaku pembatalan menurut marketplace: buyer / seller / system / Ops.
+  cancelBy             String?        @map("cancel_by")
+  /// Kode alasan pembatalan (mis. BACKEND_LOGISTICS_NOT_STARTED = batal sistem
+  /// karena barang belum diserahkan ke kurir sampai batas waktu).
+  cancelReason         String?        @map("cancel_reason")
+  /// Alasan yang dipilih pembeli saat mengajukan pembatalan.
+  buyerCancelReason    String?        @map("buyer_cancel_reason")
+  /// Kapan pembatalan DIAJUKAN (pertama kali status IN_CANCEL terlihat).
+  cancelRequestedAt    DateTime?      @map("cancel_requested_at")
+  /// Kapan pesanan benar-benar batal (pertama kali status CANCELLED terlihat).
+  cancelledAt          DateTime?      @map("cancelled_at")
   placedAt             DateTime       @map("placed_at")
   shipByAt             DateTime?      @map("ship_by_at")
   buyerName            String?        @map("buyer_name")

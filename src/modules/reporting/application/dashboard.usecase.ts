@@ -24,6 +24,9 @@ export async function getDashboardMetrics(tenantId: string): Promise<DashboardMe
   const todayEnd = new Date(now); todayEnd.setHours(23, 59, 59, 999);
   const sixHoursLater = new Date(now.getTime() + 6 * 60 * 60 * 1000);
 
+  // Pesanan yang masih menuntut pekerjaan gudang: hanya status CONFIRMED.
+  // CANCELLED dan COMPLETED dikeluarkan — memasukkannya membuat angka
+  // "menunggu stok" dan "siap diproses" membengkak palsu.
   const activeOrder = { tenantId, status: 'CONFIRMED' as const };
 
   try {
@@ -41,11 +44,22 @@ export async function getDashboardMetrics(tenantId: string): Promise<DashboardMe
       prisma.order.count({ where: { ...activeOrder, shipByAt: { gte: todayStart, lte: todayEnd } } }),
       prisma.order.count({ where: { ...activeOrder, shipByAt: { lt: now } } }),
       prisma.order.count({ where: { ...activeOrder, shipByAt: { gte: now, lte: sixHoursLater } } }),
-      prisma.fulfillmentOrder.count({ where: { status: 'WAITING_STOCK', order: { tenantId } } }),
-      prisma.fulfillmentOrder.count({ where: { status: 'READY_TO_PICK', order: { tenantId } } }),
-      prisma.fulfillmentOrder.count({ where: { status: 'READY_TO_SHIP', order: { tenantId } } }),
+      // Hanya pesanan yang masih aktif. Sebelumnya filter ini hilang, sehingga
+      // pesanan yang sudah dibatalkan pembeli tetap dihitung sebagai "menunggu
+      // stok" hanya karena baris fulfillment-nya belum diperbarui.
+      prisma.fulfillmentOrder.count({
+        where: { status: 'WAITING_STOCK', order: { ...activeOrder } },
+      }),
+      prisma.fulfillmentOrder.count({
+        where: { status: 'READY_TO_PICK', order: { ...activeOrder } },
+      }),
+      prisma.fulfillmentOrder.count({
+        where: { status: 'READY_TO_SHIP', order: { ...activeOrder } },
+      }),
       prisma.return.count({ where: { order: { tenantId }, status: { in: ['RECEIVED', 'INSPECTION'] } } }),
-      prisma.pickingTask.count({ where: { status: 'IN_PROGRESS', fulfillmentOrder: { order: { tenantId } } } }),
+      prisma.pickingTask.count({
+        where: { status: 'IN_PROGRESS', fulfillmentOrder: { order: { ...activeOrder } } },
+      }),
       prisma.orderStatusHistory.count({
         where: { toStatus: 'COMPLETED', createdAt: { gte: todayStart, lte: todayEnd }, order: { tenantId } },
       }),

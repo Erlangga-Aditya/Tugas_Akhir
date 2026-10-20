@@ -1,0 +1,11 @@
+-- Status pesanan mentah dari marketplace.
+--
+-- `status` internal (NEW/CONFIRMED/CANCELLED/COMPLETED) memetakan beberapa
+-- status Shopee ke satu nilai: READY_TO_SHIP dan PROCESSED sama-sama menjadi
+-- CONFIRMED. Akibatnya aplikasi tidak bisa membedakan "Belum diproses" dari
+-- "Telah diproses" seperti yang ditampilkan Seller Centre, dan angka kartu
+-- meleset satu-dua pesanan.
+--
+-- Kolom ini nullable dan tidak punya default, jadi penambahan ini tidak
+-- menyentuh satu baris pun data yang sudah ada.
+ALTER TABLE `orders` ADD COLUMN `external_status` VARCHAR(40) NULL;

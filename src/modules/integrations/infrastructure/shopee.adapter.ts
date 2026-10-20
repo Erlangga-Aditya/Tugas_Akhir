@@ -402,12 +402,15 @@ export class ShopeeAdapter implements MarketplaceAdapter {
     let cursor = '';
     let more = true;
 
+    const timeRangeField = options?.timeRangeField ?? 'create_time';
+    const pageSize = options?.pageSize ? Math.min(100, Math.max(1, options.pageSize)) : 50;
+
     while (more) {
       const params: Record<string, unknown> = {
-        time_range_field: 'create_time',
+        time_range_field: timeRangeField,
         time_from: from,
         time_to: to,
-        page_size: 50,
+        page_size: pageSize,
         response_optional_fields: 'order_status',
         // `order_status` sengaja TIDAK dikirim, dan `request_order_status_pending`
         // sudah dibuang.
@@ -473,6 +476,11 @@ export class ShopeeAdapter implements MarketplaceAdapter {
       'shipping_carrier',
       'total_amount',
       'note',
+      // Pembatalan: siapa pelakunya & alasannya. Tanpa diminta eksplisit,
+      // Shopee tidak mengembalikan field ini sama sekali.
+      'cancel_by',
+      'cancel_reason',
+      'buyer_cancel_reason',
       'buyer_cancel_reason',
       'pickup_done_time',
       'fulfillment_flag',
@@ -608,6 +616,10 @@ export class ShopeeAdapter implements MarketplaceAdapter {
       buyerNote: (d.note as string) ?? (d.message_to_seller as string) ?? null,
       items,
       rawStatus: String(d.order_status ?? ''),
+      // Pembatalan: `cancel_by` hanya bernilai buyer / seller / system / Ops.
+      cancelBy: d.cancel_by ? String(d.cancel_by) : null,
+      cancelReason: d.cancel_reason ? String(d.cancel_reason) : null,
+      buyerCancelReason: d.buyer_cancel_reason ? String(d.buyer_cancel_reason) : null,
       trackingNumber,
       carrier: (firstPackage.shipping_carrier as string) ?? (d.shipping_carrier as string) ?? null,
       payment,

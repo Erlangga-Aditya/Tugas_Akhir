@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Store,  ShieldCheck, UserCheck, RefreshCw,
   Plus, Pencil, Trash2, X, Check, Users, Building2,
-  Eye, EyeOff, ChevronRight,
+  Eye, EyeOff, ChevronRight, Gauge,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { PageHeader, StatusBadge, LoadingState, ErrorState, Alert, Modal } from '@/components/ui';
@@ -526,9 +526,280 @@ function UserManagementSection({ currentUserId }: { currentUserId: string }) {
   );
 }
 
+// ─── Tab: Prioritas ───────────────────────────────────────────────────────────
+
+interface PriorityCriterionRow {
+  code: string;
+  label: string;
+  weight: number;
+}
+
+const CRITERION_LABELS: Record<string, string> = {
+  DEADLINE_URGENCY: 'Kedekatan tenggat pengiriman',
+  SLA_RISK: 'Risiko pelanggaran layanan',
+  STOCK_READY: 'Ketersediaan stok',
+  ORDER_AGE: 'Usia pesanan',
+};
+
+interface PriorityRuleData {
+  id: string;
+  version: string;
+  isEnabled: boolean;
+  description: string | null;
+  config: {
+    version: string;
+    criteria: Array<{ code: string; weight: number }>;
+    thresholds: { critical: number; high: number; medium: number };
+  };
+  createdAt: string;
+}
+
+function PriorityTab() {
+  const [rule, setRule] = useState<PriorityRuleData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null);
+
+  // Bobot disimpan sebagai string di form supaya input angka desimal alami
+  // (0.40) tidak dipaksa jadi 0 setelah diketik.
+  const [weights, setWeights] = useState<Record<string, string>>({});
+  const [thresholds, setThresholds] = useState({ critical: '75', high: '50', medium: '25' });
+  const [description, setDescription] = useState('');
+
+  const load = useCallback(() => {
+    api<{ rule: PriorityRuleData | null }>('/api/v1/settings/priority')
+      .then((res) => {
+        setRule(res.rule);
+        const cfg = res.rule?.config;
+        const fromDefault = !cfg;
+        const criteria = fromDefault
+          ? [
+              { code: 'DEADLINE_URGENCY', weight: 0.4 },
+              { code: 'SLA_RISK', weight: 0.3 },
+              { code: 'STOCK_READY', weight: 0.2 },
+              { code: 'ORDER_AGE', weight: 0.1 },
+            ]
+          : cfg.criteria;
+        const next: Record<string, string> = {};
+        for (const c of criteria) next[c.code] = c.weight.toFixed(2);
+        setWeights(next);
+        const th = cfg?.thresholds ?? { critical: 75, high: 50, medium: 25 };
+        setThresholds({
+          critical: String(th.critical),
+          high: String(th.high),
+          medium: String(th.medium),
+        });
+        setDescription(res.rule?.description ?? '');
+      })
+      .catch((e) => setError((e as Error).message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(load, [load]);
+
+  const rows: PriorityCriterionRow[] = Object.entries(weights).map(([code, w]) => ({
+    code,
+    label: CRITERION_LABELS[code] ?? code,
+    weight: Number(w),
+  }));
+
+  const total = rows.reduce((sum, r) => sum + (Number.isFinite(r.weight) ? r.weight : 0), 0);
+  const totalOk = Math.abs(total - 1) <= 0.001;
+
+  const th = {
+    critical: Number(thresholds.critical),
+    high: Number(thresholds.high),
+    medium: Number(thresholds.medium),
+  };
+  const thresholdsOk =
+    Number.isFinite(th.critical) &&
+    Number.isFinite(th.high) &&
+    Number.isFinite(th.medium) &&
+    th.critical > th.high &&
+    th.high > th.medium;
+
+  async function save() {
+    setSaving(true);
+    setNotice(null);
+    try {
+      const res = await api<{ rule: PriorityRuleData }>('/api/v1/settings/priority', {
+        method: 'POST',
+        body: {
+          criteria: rows.map((r) => ({ code: r.code, weight: r.weight })),
+          thresholds: th,
+          description: description.trim() || undefined,
+        },
+      });
+      setRule(res.rule);
+      setNotice({ tone: 'success', text: `Aturan ${res.rule.version} disimpan. Pesanan baru akan memakai aturan ini.` });
+    } catch (e) {
+      setNotice({ tone: 'danger', text: (e as Error).message });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) return <LoadingState message="Memuat aturan prioritas..." />;
+  if (error) return <ErrorState message={error} onRetry={() => { setLoading(true); setError(''); load(); }} />;
+
+  return (
+    <div>
+      {notice && (
+        <div style={{ marginBottom: 16 }}>
+          <Alert tone={notice.tone}>{notice.text}</Alert>
+        </div>
+      )}
+
+      <div
+        style={{
+          background: 'var(--surface-container, #ffffff)',
+          border: '1px solid var(--outline-variant, #e5e7eb)',
+          borderRadius: 12,
+          padding: 20,
+          marginBottom: 16,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <Gauge size={16} color="var(--primary, #0284c7)" />
+          <h2 style={{ fontSize: 15, fontWeight: 700 }}>Aturan Prioritas Pemenuhan Pesanan</h2>
+        </div>
+        <p className="small muted" style={{ margin: '0 0 16px', lineHeight: 1.6 }}>
+          Bobot menentukan seberapa besar tiap kriteria memengaruhi urutan pesanan. Jumlah seluruh
+          bobot harus 1,00. Aturan baru disimpan sebagai versi baru — aturan lama dinonaktifkan,
+          bukan dihapus, sehingga perubahan kebijakan tetap tertinggal.
+        </p>
+
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Kriteria</th>
+                <th className="num">Bobot</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.code}>
+                  <td>{r.label}</td>
+                  <td className="num">
+                    <input
+                      type="number"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={weights[r.code]}
+                      onChange={(e) => setWeights({ ...weights, [r.code]: e.target.value })}
+                      style={{ width: 90, textAlign: 'right' }}
+                      aria-label={`Bobot ${r.label}`}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12, flexWrap: 'wrap' }}>
+          <strong>Total bobot:</strong>
+          <span
+            className="mono"
+            style={{ fontWeight: 800, color: totalOk ? 'var(--success, #10b981)' : 'var(--error, #ef4444)' }}
+          >
+            {total.toFixed(2)}
+          </span>
+          {!totalOk && (
+            <span className="small" style={{ color: 'var(--error, #ef4444)' }}>
+              Jumlah bobot harus 1,00
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div
+        style={{
+          background: 'var(--surface-container, #ffffff)',
+          border: '1px solid var(--outline-variant, #e5e7eb)',
+          borderRadius: 12,
+          padding: 20,
+          marginBottom: 16,
+        }}
+      >
+        <h2 style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>Ambang Tingkat Prioritas</h2>
+        <p className="small muted" style={{ margin: '0 0 16px', lineHeight: 1.6 }}>
+          Pesanan dengan skor sama atau lebih besar dari ambang ditempatkan pada tingkat itu.
+          Kritis harus lebih besar dari Tinggi, dan Tinggi harus lebih besar dari Sedang.
+        </p>
+
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          {(['critical', 'high', 'medium'] as const).map((k) => (
+            <label key={k} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span className="small" style={{ fontWeight: 600 }}>
+                {k === 'critical' ? 'Kritis' : k === 'high' ? 'Tinggi' : 'Sedang'}
+              </span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={thresholds[k]}
+                onChange={(e) => setThresholds({ ...thresholds, [k]: e.target.value })}
+                style={{ width: 90 }}
+                aria-label={`Ambang ${k}`}
+              />
+            </label>
+          ))}
+        </div>
+        {!thresholdsOk && (
+          <div className="small" style={{ color: 'var(--error, #ef4444)', marginTop: 8 }}>
+            Ambang kritis harus lebih besar dari tinggi, dan tinggi harus lebih besar dari sedang.
+          </div>
+        )}
+      </div>
+
+      <div
+        style={{
+          background: 'var(--surface-container, #ffffff)',
+          border: '1px solid var(--outline-variant, #e5e7eb)',
+          borderRadius: 12,
+          padding: 20,
+          marginBottom: 16,
+        }}
+      >
+        <h2 style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>Catatan</h2>
+        <input
+          type="text"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Misal: tingkatkan bobot tenggat menjelang ramadan"
+          maxLength={200}
+          style={{ width: '100%' }}
+        />
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => void save()}
+          disabled={saving || !totalOk || !thresholdsOk}
+        >
+          <Check size={14} aria-hidden />
+          <span>{saving ? 'Menyimpan...' : 'Simpan Aturan Baru'}</span>
+        </button>
+        {rule && (
+          <span className="small muted">
+            Aturan aktif: <strong>{rule.version}</strong>
+            {rule.description ? ` — ${rule.description}` : ''}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
-type ActiveTab = 'profil' | 'gudang' | 'pengguna' | 'toko';
+type ActiveTab = 'profil' | 'gudang' | 'pengguna' | 'toko' | 'prioritas';
 
 export default function PengaturanPage() {
   const [me, setMe] = useState<Me | null>(null);
@@ -583,6 +854,7 @@ export default function PengaturanPage() {
         <Tab label="Gudang" icon={<Building2 size={15} aria-hidden />} active={activeTab === 'gudang'} onClick={() => setActiveTab('gudang')} />
         <Tab label="Pengguna" icon={<Users size={15} aria-hidden />} active={activeTab === 'pengguna'} onClick={() => setActiveTab('pengguna')} />
         <Tab label="Toko & Channel" icon={<Store size={15} aria-hidden />} active={activeTab === 'toko'} onClick={() => setActiveTab('toko')} />
+        <Tab label="Prioritas" icon={<Gauge size={15} aria-hidden />} active={activeTab === 'prioritas'} onClick={() => setActiveTab('prioritas')} />
       </div>
 
       {/* ── Tab: Profil ─────────────────────────────────────────────── */}
@@ -685,6 +957,9 @@ export default function PengaturanPage() {
           </p>
         </div>
       )}
+
+      {/* ── Tab: Prioritas ─────────────────────────────────────────── */}
+      {activeTab === 'prioritas' && <PriorityTab />}
     </div>
   );
 }

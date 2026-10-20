@@ -5,16 +5,23 @@ import { isValidOrderTransition, type OrderStatus as DomainOrderStatus } from '.
 import {
   calculatePriority,
   explainPriority,
-  DEFAULT_PRIORITY_RULE,
-  type PriorityRuleConfig,
 } from '../domain/priority.engine';
+import { getActivePriorityConfig } from './priorityRule.usecase';
 import {
   NotFoundError,
   ValidationError,
   InvalidStateTransitionError,
 } from '@/shared/errors/AppError';
 import { auditLog } from '@/modules/audit/application/auditLog.service';
-import { releaseReservationsForOrder } from '@/modules/inventory/application/inventory.usecase';
+import {
+  releaseReservationsForOrder,
+  markFulfillmentOrdersException,
+  getAvailabilityMap,
+} from '@/modules/inventory/application/inventory.usecase';
+import {
+  deriveOperatorWorkflow,
+  resolveOperatorStage,
+} from '@/modules/fulfillment/domain/operator-workflow';
 import { logger } from '@/shared/observability/logger';
 
 // ────────────────────────────────────────────────────────────
@@ -30,6 +37,17 @@ export const ImportOrderSchema = z.object({
   buyerPhone: z.string().max(30).nullable().optional(),
   shippingAddress: z.record(z.unknown()).optional(),
   status: z.enum(['NEW', 'CONFIRMED', 'CANCELLED', 'COMPLETED']).optional(),
+  /**
+   * Status MENTAH marketplace (Shopee `order_status`). Disimpan apa adanya
+   * supaya "Belum diproses" dan "Telah diproses" bisa dibedakan lagi.
+   */
+  externalStatus: z.string().max(40).nullable().optional(),
+  /** Pelaku pembatalan: buyer / seller / system / Ops (dari marketplace). */
+  cancelBy: z.string().max(20).nullable().optional(),
+  /** Kode alasan pembatalan dari marketplace. */
+  cancelReason: z.string().max(80).nullable().optional(),
+  /** Alasan versi pembeli saat mengajukan pembatalan. */
+  buyerCancelReason: z.string().max(255).nullable().optional(),
   // ── Rincian uang dari marketplace (opsional: tidak semua pesanan punya) ──
   buyerNote: z.string().max(2000).nullable().optional(),
   packageNumber: z.string().max(120).nullable().optional(),
@@ -83,6 +101,10 @@ export async function importOrder(
   const {
     shopId,
     externalOrderId,
+    externalStatus,
+    cancelBy,
+    cancelReason,
+    buyerCancelReason,
     items,
     buyerNote,
     packageNumber,
@@ -151,7 +173,38 @@ export async function importOrder(
       existing.status !== 'CANCELLED' &&
       existing.status !== 'COMPLETED';
 
-    const hasFieldUpdates = Object.keys(moneyFields).length > 0 || Object.keys(contactFields).length > 0;
+    // Status mentah ikut disimpan setiap sinkronisasi. Ini yang membuat kartu
+    // "Belum diproses" / "Telah diproses" tetap sama dengan Seller Centre,
+    // walaupun status internal tidak berubah (READY_TO_SHIP → PROCESSED
+    // keduanya CONFIRMED).
+    const externalStatusChanged =
+      externalStatus !== undefined && externalStatus !== null && externalStatus !== existing.externalStatus;
+
+    // Jejak waktu pembatalan: dicatat SAAT PERTAMA KALI terlihat dan tidak
+    // pernah ditimpa. Inilah dasar filter tanggal "pembatalan diajukan hari ini".
+    const cancelRequestedAt =
+      externalStatus === 'IN_CANCEL' && !existing.cancelRequestedAt ? new Date() : undefined;
+    const cancelledAt =
+      externalStatus === 'CANCELLED' && !existing.cancelledAt ? new Date() : undefined;
+
+    // Hanya ditulis bila memang berubah supaya sinkronisasi tidak menulis
+    // ulang baris yang sama setiap 60 detik.
+    const cancelFields: Record<string, string> = {};
+    if (cancelBy !== undefined && cancelBy !== null && cancelBy !== existing.cancelBy) cancelFields.cancelBy = cancelBy;
+    if (cancelReason !== undefined && cancelReason !== null && cancelReason !== existing.cancelReason) {
+      cancelFields.cancelReason = cancelReason;
+    }
+    if (buyerCancelReason !== undefined && buyerCancelReason !== null && buyerCancelReason !== existing.buyerCancelReason) {
+      cancelFields.buyerCancelReason = buyerCancelReason;
+    }
+
+    const hasFieldUpdates =
+      Object.keys(moneyFields).length > 0 ||
+      Object.keys(contactFields).length > 0 ||
+      Object.keys(cancelFields).length > 0 ||
+      Boolean(cancelRequestedAt) ||
+      Boolean(cancelledAt) ||
+      externalStatusChanged;
 
     if (statusChanged || hasFieldUpdates) {
       await prisma.$transaction(async (tx) => {
@@ -161,6 +214,10 @@ export async function importOrder(
             ...contactFields,
             ...moneyFields,
             ...(statusChanged ? { status: incoming as OrderStatus } : {}),
+            ...(externalStatusChanged ? { externalStatus } : {}),
+            ...cancelFields,
+            ...(cancelRequestedAt ? { cancelRequestedAt } : {}),
+            ...(cancelledAt ? { cancelledAt } : {}),
           },
         });
         if (statusChanged) {
@@ -189,6 +246,10 @@ export async function importOrder(
         null,
         'Pesanan dibatalkan di Shopee',
       );
+      // Baris fulfillment-nya juga harus ditandai batal. Sebelumnya hanya
+      // reservasi yang dilepas: pesanan batal tetap dihitung sebagai
+      // "menunggu stok" pada ringkasan dashboard (angka membengkak palsu).
+      await markFulfillmentOrdersException(existing.tenantId, existing.id);
     }
 
     return { orderId: existing.id, created: false };
@@ -213,6 +274,13 @@ export async function importOrder(
         shopId,
         externalOrderId,
         status: status as OrderStatus,
+        // Status mentah marketplace hanya ditulis bila memang dikirim.
+        ...(externalStatus ? { externalStatus } : {}),
+        ...(cancelBy ? { cancelBy } : {}),
+        ...(cancelReason ? { cancelReason } : {}),
+        ...(buyerCancelReason ? { buyerCancelReason } : {}),
+        ...(externalStatus === 'IN_CANCEL' ? { cancelRequestedAt: new Date() } : {}),
+        ...(externalStatus === 'CANCELLED' ? { cancelledAt: new Date() } : {}),
         placedAt: orderData.placedAt,
         shipByAt: orderData.shipByAt ?? null,
         buyerName: orderData.buyerName ?? null,
@@ -322,20 +390,9 @@ export async function recalculateOrderPriority(tenantId: string, orderId: string
     return reserved >= item.quantity;
   });
 
-  const ruleRecord = await prisma.priorityRule.findFirst({
-    where: { tenantId, isEnabled: true },
-    orderBy: { createdAt: 'desc' },
-  });
-
-  let rule: PriorityRuleConfig = DEFAULT_PRIORITY_RULE;
-  if (ruleRecord) {
-    try {
-      rule = ruleRecord.criteriaJson as unknown as PriorityRuleConfig;
-      rule.version = ruleRecord.version;
-    } catch {
-      logger.warn('Invalid priority rule config, using default', { tenantId, ruleId: ruleRecord.id });
-    }
-  }
+  // Aturan diambil lewat usecase prioritas (satu sumber kebenaran) supaya
+  // bentuk lawas `weights` selalu dinormalkan di satu tempat.
+  const rule = await getActivePriorityConfig(tenantId);
 
   const result = calculatePriority(
     { shipByAt: order.shipByAt, placedAt: order.placedAt, isStockReady },
@@ -555,11 +612,50 @@ export async function getOrderDetail(tenantId: string, orderId: string) {
       : null;
 
   const mainShipment = order.shipments[0];
+  const activeFulfillment =
+    order.fulfillmentOrders.find((fo) => fo.status !== 'COMPLETED') ?? order.fulfillmentOrders[0] ?? null;
+
+  // Aksi yang boleh ditawarkan dihitung oleh SATU sumber (`operator-workflow`).
+  // Sebelumnya halaman detail memakai syaratnya sendiri (`!awb` → tombol
+  // "Ambil Resi"), sehingga pesanan batal dan pesanan yang sudah diterima
+  // pembeli tetap menawarkan permintaan resi ke Shopee.
+  const stage = resolveOperatorStage({
+    orderStatus: order.status,
+    fulfillmentStatus: activeFulfillment?.status ?? null,
+    shipmentStatus: mainShipment?.status ?? null,
+  });
+
+  // Kekurangan stok dihitung dari satu query batch (bukan per item), supaya
+  // tahap kerja yang dikirim ke UI benar-benar mencerminkan stok hari ini.
+  let shortfallUnits = 0;
+  if (activeFulfillment) {
+    const availability = await getAvailabilityMap(
+      [activeFulfillment.warehouseId],
+      [...new Set(order.items.map((item) => item.variantId))],
+    );
+    shortfallUnits = order.items.reduce((sum, item) => {
+      const ownReservation = item.reservations.reduce((acc, r) => acc + r.quantity, 0);
+      const available =
+        (availability.get(`${activeFulfillment.warehouseId}:${item.variantId}`)?.available ?? 0) +
+        ownReservation;
+      const required = item.quantity - item.fulfilledQuantity;
+      return sum + (required > available ? required - available : 0);
+    }, 0);
+  }
+
+  const workflow = deriveOperatorWorkflow({
+    stage,
+    hasAwb: Boolean(mainShipment?.awb?.trim()),
+    hasShortfall: shortfallUnits > 0,
+  });
 
   return {
     id: order.id,
     externalOrderId: order.externalOrderId,
     status: order.status,
+    stage,
+    workflow,
+    shortfallUnits,
     shopId: order.shopId,
     shopName: order.shop.name,
     provider: order.shop.provider,

@@ -57,6 +57,15 @@ export interface MarketplaceOrder {
   shippingAddress: Record<string, unknown>;
   items: MarketplaceOrderItem[];
   rawStatus: string;
+  /**
+   * Pelaku pembatalan menurut marketplace: `buyer` | `seller` | `system` | `Ops`.
+   * `null` = tidak ada pembatalan (atau marketplace tidak menyediakannya).
+   */
+  cancelBy?: string | null;
+  /** Alasan pembatalan (kode enum marketplace, mis. `BACKEND_LOGISTICS_NOT_STARTED`). */
+  cancelReason?: string | null;
+  /** Alasan versi pembeli (khusus pembatalan yang diajukan pembeli). */
+  buyerCancelReason?: string | null;
   trackingNumber: string | null;
   carrier: string | null;
   payment: MarketplaceOrderPayment | null;
@@ -126,6 +135,7 @@ export interface SyncOptions {
   fromDate?: Date;
   toDate?: Date;
   pageSize?: number;
+  timeRangeField?: 'create_time' | 'update_time';
 }
 
 /** Hasil label resmi: file dari Shopee + format yang dipakainya. */

@@ -19,9 +19,11 @@ import {
   ScanLine,
   Copy,
   Check,
+  Gauge,
 } from 'lucide-react';
 import { api, formatDate, formatRupiah , openOfficialLabel } from '@/lib/api';
 import {  StatusBadge, LoadingState, ErrorState, Alert } from '@/components/ui';
+import type { OperatorStage, OperatorWorkflow } from '@/modules/fulfillment/domain/operator-workflow';
 
 interface OrderDetail {
   id: string;
@@ -53,6 +55,10 @@ interface OrderDetail {
   carrier: string | null;
   shipmentStatus: string | null;
   canPrintOfficialLabel: boolean;
+  /** Tahap kerja & aksi yang boleh ditawarkan — dihitung server (satu sumber). */
+  stage: OperatorStage;
+  workflow: OperatorWorkflow;
+  shortfallUnits: number;
   items: Array<{
     id: string;
     sku: string;
@@ -88,7 +94,15 @@ interface OrderDetail {
       occurredAt: string;
     }>;
   }>;
-}
+  /** Hasil perhitungan prioritas beserta alasan yang dapat dibaca operator. */
+  priority: {
+    score: number | null;
+    level: string | null;
+    ruleVersion: string | null;
+    factors: Array<{ code: string; value: number; weight: number }> | null;
+    explanation: string | null;
+  } | null;
+};
 
 export default function OrderDetailPage({ params }: { params: Promise<{ orderId: string }> }) {
   const { orderId } = use(params);
@@ -237,10 +251,11 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
           </div>
         </div>
 
-        {/* Top Action Buttons */}
+        {/* Tombol aksi — SEMUA berasal dari `order.workflow` yang dihitung server.
+            Sebelumnya di sini tertulis `!awb` → "Ambil Resi", sehingga pesanan batal
+            dan pesanan yang sudah diterima pembeli tetap menawarkan permintaan resi. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          {/* Cetak Label RESMI Shopee (hanya kalau resi sudah ada) */}
-          {awb ? (
+          {order.workflow.canPrintLabel ? (
             <button
               type="button"
               onClick={handlePrintLabel}
@@ -251,15 +266,9 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
               <Printer size={15} />
               <span>{printingLabel ? 'Menyiapkan label dari Shopee…' : 'Cetak Label Resi'}</span>
             </button>
-          ) : (
-            <span className="small muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-              <Printer size={15} />
-              <span>Label resmi Shopee muncul setelah nomor resi terbit</span>
-            </span>
-          )}
+          ) : null}
 
-          {/* Atur Pengiriman Button */}
-          {!awb && (
+          {order.workflow.canArrangeShipment ? (
             <button
               type="button"
               onClick={handleArrangeShipment}
@@ -270,7 +279,20 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
               <Truck size={15} />
               <span>{arranging ? 'Memproses...' : 'Ambil Resi dari Shopee'}</span>
             </button>
-          )}
+          ) : null}
+
+          {order.workflow.isFinal ? (
+            <span className="small muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <CheckCircle2 size={15} />
+              <span>
+                {order.stage === 'DIBATALKAN'
+                  ? 'Pesanan dibatalkan — tidak ada langkah kerja lagi.'
+                  : order.stage === 'SELESAI'
+                    ? 'Pesanan selesai — sudah diterima pembeli.'
+                    : 'Paket sudah diserahkan ke kurir.'}
+              </span>
+            </span>
+          ) : null}
 
           {/* Kembali ke daftar kerja */}
           <Link
@@ -283,6 +305,42 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
           </Link>
         </div>
       </div>
+
+      {/* Kartu Prioritas: skor, tingkat, dan alasan yang dapat dibaca operator.
+          Ini adalah salah satu kebaruan penelitian — maka ditampilkan lengkap. */}
+      {order.priority?.level && (
+        <div
+          style={{
+            background: 'var(--surface-container, #ffffff)',
+            border: '1px solid var(--outline-variant, #e5e7eb)',
+            borderRadius: 12,
+            padding: 16,
+            marginBottom: 20,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 16,
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Gauge size={18} color="var(--primary, #0284c7)" />
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted)' }}>PRIORITAS Pemenuhan</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+                <StatusBadge status={order.priority.level} />
+                <span className="mono" style={{ fontWeight: 800, fontSize: 15 }}>
+                  Skor {order.priority.score ?? '—'}
+                </span>
+                <span className="small muted">({order.priority.ruleVersion ?? '—'})</span>
+              </div>
+            </div>
+          </div>
+          <div style={{ flex: 1, minWidth: 240, fontSize: 13, lineHeight: 1.6 }}>
+            <strong>Alasan: </strong>
+            <span>{order.priority.explanation ?? 'Prioritas reguler.'}</span>
+          </div>
+        </div>
+      )}
 
       {/* 3-Column Info Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16, marginBottom: 20 }}>

@@ -203,9 +203,13 @@ describe('Shopee shipping document client — kegagalan sementara diulang', () =
     fetchMock.mockImplementation(() => Promise.resolve(batchFailure('Channel does not support this shipping document type')));
 
     const p = createDocument(cfg, creds, target, 'NORMAL_AIR_WAYBILL');
+    // Pasang handler penolakan dululu, baru jalan an waktu: tanpa ini, promise
+    // sudah ditolak sebelum `expect(...).rejects` terpasang dan Node
+    // melaporkannya sebagai Unhandled Rejection yang menyesatkan.
+    const assertion = expect(p).rejects.toBeInstanceOf(ExternalIntegrationError);
     for (let i = 0; i < 10; i += 1) await vi.advanceTimersByTimeAsync(1_000);
 
-    await expect(p).rejects.toBeInstanceOf(ExternalIntegrationError);
+    await assertion;
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -213,9 +217,10 @@ describe('Shopee shipping document client — kegagalan sementara diulang', () =
     fetchMock.mockImplementation(() => Promise.resolve(batchFailure('Number of response is less than expected')));
 
     const p = createDocument(cfg, creds, target, 'NORMAL_AIR_WAYBILL');
+    const assertion = expect(p).rejects.toThrow(/Number of response is less than expected/);
     for (let i = 0; i < 20; i += 1) await vi.advanceTimersByTimeAsync(1_000);
 
-    await expect(p).rejects.toThrow(/Number of response is less than expected/);
+    await assertion;
     // 1 + 2 retry = 3 percobaan, lalu berhenti.
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });

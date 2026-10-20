@@ -214,6 +214,7 @@ export default function KelolaTimPage() {
       {showForm ? <InviteForm onDone={() => { setShowForm(false); void load(); }} catalog={data.catalog} defaultPermissions={data.defaultPermissions} /> : null}
 
       <div className="card" style={{ marginTop: 16 }}>
+        <div className="table-wrap">
         <table className="table">
           <thead>
             <tr>
@@ -249,9 +250,9 @@ export default function KelolaTimPage() {
                       <span className="muted small">{current.length} dari {data.catalog.length} izin</span>
                     )}
                   </td>
-                  <td style={{ whiteSpace: 'nowrap' }}>
+                  <td>
                     {!m.isOwner ? (
-                      <>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                         <button
                           type="button"
                           className="btn btn-ghost"
@@ -275,14 +276,17 @@ export default function KelolaTimPage() {
                         >
                           <Trash2 size={16} aria-hidden /> Cabut
                         </button>
-                      </>
-                    ) : null}
+                      </div>
+                    ) : (
+                      <span className="muted small">—</span>
+                    )}
                   </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
+        </div>
       </div>
 
       {openId
@@ -335,7 +339,7 @@ function PermissionEditor({
           <h2>Hak akses — {member.name}</h2>
           <p className="muted small">Centang yang boleh. Kosongkan berarti tidak boleh sama sekali.</p>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {PRESETS.map((p) => (
             <button
               key={p.id}
@@ -376,7 +380,7 @@ function PermissionEditor({
                 />
                 <span>
                   {c.label}
-                  <div className="muted small" style={{ fontFamily: 'monospace' }}>{c.key}</div>
+                  <div className="muted small" style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>{c.key}</div>
                 </span>
               </label>
             ))}

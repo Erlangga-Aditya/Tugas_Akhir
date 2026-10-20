@@ -8,11 +8,18 @@ export interface ApiError extends Error {
   details?: Record<string, unknown>;
 }
 
-export async function api<T>(path: string, options?: { method?: string; body?: unknown }): Promise<T> {
+export async function api<T>(
+  path: string,
+  options?: { method?: string; body?: unknown; signal?: AbortSignal },
+): Promise<T> {
   const res = await fetch(path, {
     method: options?.method ?? 'GET',
     headers: options?.body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
     body: options?.body !== undefined ? JSON.stringify(options.body) : undefined,
+    // `signal` dipakai halaman yang filternya bisa berubah cepat (mis. Pesanan).
+    // Tanpa ini, jawaban lama bisa tiba setelah jawaban baru dan menimpa layar
+    // dengan data dari filter yang sudah tidak dipilih.
+    signal: options?.signal,
   });
 
   const json = (await res.json().catch(() => ({}))) as {

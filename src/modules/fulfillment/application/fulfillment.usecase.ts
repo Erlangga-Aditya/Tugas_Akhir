@@ -18,6 +18,19 @@ import { consumeStockLotsFifo } from '@/modules/inventory/application/stock-lot.
 import { reconcileOrphanReservations } from '@/modules/inventory/application/inventory.usecase';
 import { recalculateOrderPriority } from '@/modules/orders/application/order.usecase';
 import { logger } from '@/shared/observability/logger';
+import {
+  deriveOperatorWorkflow,
+  resolveOperatorStage,
+  type OperatorStage,
+} from '../domain/operator-workflow';
+import { placedAtFilter, type DateRange } from '../domain/date-range';
+import { belongsToBucket, classifyWorkQueue, countBuckets, type QueueBucket } from '../domain/work-queue';
+import {
+  isSystemCancelNeedsAttention,
+  resolveCancelCategory,
+  resolveLateRisk,
+  type ExceptionKategori,
+} from '../domain/order-exceptions';
 
 /** Item yang stoknya belum cukup untuk sebuah pesanan. */
 export interface StockShortfall {
@@ -839,17 +852,11 @@ export async function handOverToCarrier(
 /**
  * Tahapan alur yang dilihat operator (bahasa sehari-hari).
  *
- * `DIBATALKAN` bukan tahap kerja — pesanan ini tidak akan pernah dikemas.
- * Tetap ditampilkan supaya operator bisa melihat pesanan mana yang batal,
- * alih-alih pesanan itu hilang tanpa kabar.
+ * Alias dari `OperatorStage` di lapisan domain supaya tidak ada dua definisi
+ * tahap yang bisa berbeda. `DIBATALKAN` bukan tahap kerja — pesanan ini tidak
+ * akan pernah dikemas — tetapi tetap ditampilkan supaya tidak hilang tanpa kabar.
  */
-export type StationStage =
-  | 'BARU'
-  | 'MENUNGGU_STOK'
-  | 'SIAP_DIKEMAS'
-  | 'SIAP_KIRIM'
-  | 'DIKIRIM'
-  | 'DIBATALKAN';
+export type StationStage = OperatorStage;
 
 /**
  * Urutan resmi tahap stasiun kerja.
@@ -867,6 +874,7 @@ export const STATION_STAGES = [
   'SIAP_KIRIM',
   'DIKIRIM',
   'DIBATALKAN',
+  'SELESAI',
 ] as const satisfies readonly StationStage[];
 
 /**
@@ -891,13 +899,35 @@ export async function getFulfillmentStation(
   tenantId: string,
   options: {
     sort?: 'oldest' | 'newest';
-    /** Batasi ke satu tahap saja; null berarti semua tahap. */
-    stage?: StationStage | null;
+    /** Cari berdasarkan nomor pesanan, nomor resi, nama pembeli, atau SKU. */
+    search?: string;
+    /**
+     * Kartu penyaring: `baru` (belum ada resi), `sudahResi`, `perluDiproses`
+     * (keduanya), atau `semua` (termasuk batal & selesai). Default
+     * `perluDiproses` karena itulah pekerjaan operator sehari-hari.
+     */
+    bucket?: QueueBucket;
+    /** Rentang tanggal pesanan masuk (WIB). `{from:null,to:null}` = semua tanggal. */
+    range?: DateRange;
+    /**
+     * Saring ke satu kelompok "perlu perhatian": pembatalan yang diajukan,
+     * batal oleh sistem, atau pesanan yang terlambat/berisiko terlambat.
+     */
+    kategori?: ExceptionKategori;
     page?: number;
     pageSize?: number;
   } = {},
 ) {
   const sortDir: 'asc' | 'desc' = options.sort === 'newest' ? 'desc' : 'asc';
+  const kategori = options.kategori ?? null;
+  /** Satu acuan waktu untuk seluruh perhitungan pada satu permintaan. */
+  const now = new Date();
+  const kataKunci = options.search?.trim();
+  const range = {
+    from: options.range?.from ?? null,
+    to: options.range?.to ?? null,
+    placedAt: placedAtFilter({ from: options.range?.from ?? null, to: options.range?.to ?? null }),
+  };
   const pageSize = Math.min(100, Math.max(1, options.pageSize ?? 20));
   const requestedPage = Math.max(1, options.page ?? 1);
 
@@ -911,7 +941,31 @@ export async function getFulfillmentStation(
     // `CANCELLED` ikut diambil supaya operator bisa melihat pesanan yang batal.
     // Pesanan batal tidak boleh hilang dari halaman — kalau hilang, operator
     // tidak pernah tahu kalau ada pembeli yang membatalkan pesanan.
-    where: { tenantId, status: { in: ['NEW', 'CONFIRMED', 'CANCELLED'] } },
+    where: {
+      tenantId,
+      // `CANCELLED` ikut diambil supaya operator bisa melihat pesanan yang
+      // batal. Pesanan batal tidak boleh hilang dari halaman.
+      // `COMPLETED` ikut diambil: pesanan yang sudah selesai harus bisa
+      // dilihat operator (dan dihitung di ringkasan). Sebelumnya status ini
+      // tidak pernah diambil, sehingga pesanan yang sudah diterima pembeli
+      // lenyap dari layar tanpa cara menampilkannya kembali.
+      status: { in: ['NEW', 'CONFIRMED', 'CANCELLED', 'COMPLETED'] },
+      // Rentang tanggal memakai `placedAt` (tanggal pesanan masuk), bukan
+      // `createdAt` (tanggal baris dibuat di database): angka di layar harus
+      // sama dengan tanggal yang dilihat penjual di Seller Centre.
+      ...(range.placedAt ? { placedAt: range.placedAt } : {}),
+      ...(kataKunci
+        ? {
+            OR: [
+              { externalOrderId: { contains: kataKunci } },
+              { buyerName: { contains: kataKunci } },
+              { buyerPhone: { contains: kataKunci } },
+              { shipments: { some: { awb: { contains: kataKunci } } } },
+              { items: { some: { variant: { sku: { contains: kataKunci } } } } },
+            ],
+          }
+        : {}),
+    },
     include: {
       shop: { select: { name: true, provider: true } },
       items: {
@@ -972,21 +1026,26 @@ export async function getFulfillmentStation(
       };
     });
 
-    // Pesanan batal tidak punya tahap kerja: tidak akan pernah dikemas, dan
-    // tombol aksi (scan, ambil resi, serahkan) harus dimatikan.
-    const stage: StationStage = o.status === 'CANCELLED'
-      ? 'DIBATALKAN'
-      : !fo
-        ? 'BARU'
-        : fo.status === 'WAITING_STOCK'
-          ? 'MENUNGGU_STOK'
-          : fo.status === 'PACKED' || fo.status === 'READY_TO_SHIP'
-            ? 'SIAP_KIRIM'
-            : fo.status === 'HANDED_OVER'
-              ? 'DIKIRIM'
-              : 'SIAP_DIKEMAS';
+    // Tahap & aksi dihitung oleh SATU sumber (`operator-workflow`), bukan
+    // diturunkan ulang di sini. Sebelumnya tiga tempat menghitung sendiri-sendiri
+    // (server, daftar pesanan, halaman detail) dan hasilnya berbeda: pesanan batal
+    // bisa menampilkan tombol "Ambil Resi".
+    const stage = resolveOperatorStage({
+      orderStatus: o.status,
+      fulfillmentStatus: fo?.status ?? null,
+      shipmentStatus: shipment?.status ?? null,
+    });
 
     const dibatalkan = o.status === 'CANCELLED';
+
+    // Kekurangan stok ikut menentukan aksi: pesanan yang stoknya kurang harus
+    // diarahkan ke "isi stok", bukan ke scan resi yang akan gagal.
+    const shortfallUnits = items.reduce((sum, i) => sum + i.shortfall, 0);
+    const workflow = deriveOperatorWorkflow({
+      stage,
+      hasAwb: Boolean(shipment?.awb?.trim()),
+      hasShortfall: shortfallUnits > 0,
+    });
 
     return {
       orderId: o.id,
@@ -999,39 +1058,148 @@ export async function getFulfillmentStation(
       shipByAt: o.shipByAt,
       priorityLevel: o.priorityLevel,
       orderStatus: o.status,
+      /** Status mentah marketplace (READY_TO_SHIP / PROCESSED / …). */
+      externalStatus: o.externalStatus,
+      /** Pelaku pembatalan menurut Shopee (buyer/seller/system/Ops). */
+      cancelBy: o.cancelBy,
+      cancelReason: o.cancelReason,
+      buyerCancelReason: o.buyerCancelReason,
+      cancelRequestedAt: o.cancelRequestedAt?.toISOString() ?? null,
+      cancelledAt: o.cancelledAt?.toISOString() ?? null,
+      /** Kategori pembatalan & risiko keterlambatan (dihitung domain murni). */
+      cancelCategory: resolveCancelCategory({ externalStatus: o.externalStatus, cancelBy: o.cancelBy }),
+      lateRisk: resolveLateRisk({ externalStatus: o.externalStatus, shipByAt: o.shipByAt, now }),
       fulfillmentId: fo?.id ?? null,
       fulfillmentStatus: fo?.status ?? null,
       awb: shipment?.awb ?? null,
       carrier: shipment?.carrier ?? null,
+      /**
+       * Status paket menurut catatan kita (READY_TO_SHIP / PICKED_UP /
+       * IN_TRANSIT / DELIVERED / FAILED / RETURNED). Dipakai untuk kartu
+       * ringkasan dan penyaring, supaya operator bisa membedakan paket yang
+       * belum dijemput, sedang di perjalanan, dan sudah diterima pembeli.
+       */
+      shipmentStatus: shipment?.status ?? null,
       isCancelled: dibatalkan,
       canCancel: false,
-      // Pesanan batal tidak boleh offer aksi apa pun: tidak bisa scan, tidak
-      // bisa minta resi baru. Kalau tidak dijaga, operator bisa memicu
-      // perubahan stok untuk pesanan yang sudah dibatalkan pembeli.
-      canArrangeShipment: !dibatalkan && !shipment?.awb,
-      /** Barang hanya boleh dinyatakan siap kirim setelah nomor resi terbit. */
-      canPack: !dibatalkan && Boolean(shipment?.awb),
-      canHandOver: !dibatalkan && fo?.status === 'READY_TO_SHIP',
+      /**
+       * Aksi yang boleh ditawarkan — dihitung sekali di `operator-workflow`.
+       * UI tidak boleh menyusun syaratnya sendiri lagi; itulah akar tombol
+       * "Ambil Resi" yang muncul pada pesanan batal / sudah diterima pembeli.
+       */
+      workflow,
+      canArrangeShipment: workflow.canArrangeShipment,
+      /** Barang hanya boleh dinyatakan siap kirim setelah nomor resi terbit dan belum diserahkan ke kurir. */
+      canPack: workflow.canScan,
+      canHandOver: workflow.canHandover,
       stage,
       items,
       totalUnits: items.reduce((sum, i) => sum + i.quantity, 0),
-      shortfallUnits: items.reduce((sum, i) => sum + i.shortfall, 0),
+      shortfallUnits,
     };
   });
 
-  // Jumlah per tahap dihitung dari SELURUH kandidat, bukan dari halaman yang
-  // sedang tampil - kalau dihitung dari halaman, angka di tab akan berubah
-  // setiap kali operator berpindah halaman dan itu menyesatkan.
-  const stages = {
-    baru: unified.filter((u) => u.stage === 'BARU').length,
-    menungguStok: unified.filter((u) => u.stage === 'MENUNGGU_STOK').length,
-    siapDikemas: unified.filter((u) => u.stage === 'SIAP_DIKEMAS').length,
-    siapKirim: unified.filter((u) => u.stage === 'SIAP_KIRIM').length,
-    dikirim: unified.filter((u) => u.stage === 'DIKIRIM').length,
-    dibatalkan: unified.filter((u) => u.stage === 'DIBATALKAN').length,
+  /**
+   * Tiga angka yang benar-benar dipakai operator (dan satu-satunya yang tampil):
+   *
+   *   Pesanan Baru    = masih menunggu pekerjaan gudang & BELUM punya nomor resi
+   *   Sudah Ada Resi  = masih menunggu pekerjaan gudang & nomor resi sudah terbit
+   *   Perlu Diproses  = jumlah keduanya
+   *
+   * Dihitung dari SELURUH kandidat pada rentang tanggal yang dipilih, bukan
+   * dari halaman yang sedang tampil — angka di kartu tidak boleh berubah hanya
+   * karena operator pindah halaman.
+   */
+  const withQueue = unified.map((order) => ({
+    order,
+    queue: classifyWorkQueue({
+      orderStatus: order.orderStatus,
+      externalStatus: order.externalStatus,
+      fulfillmentStatus: order.fulfillmentStatus,
+      shipmentStatus: order.shipmentStatus,
+      hasAwb: Boolean(order.awb && order.awb.trim() !== ''),
+    }),
+  }));
+  const kartu = countBuckets(withQueue.map((item) => item.queue));
+
+  // Anomali yang bisa ditutup operator: paket sudah keluar gudang (dijemput /
+  // transit / diterima / gagal / kembali) tetapi catatan fulfillment-nya masih
+  // berstatus "di gudang". Selama belum ditutup, scan resi paket itu berhenti
+  // di pemeriksaan stok — asal pesan "harus tambah stok" yang membingungkan.
+  const STATUS_MASIH_DI_GUDANG = new Set([
+    'WAITING_STOCK',
+    'READY_TO_PICK',
+    'PICKING',
+    'PICKED',
+    'PACKING',
+    'PACKED',
+    'READY_TO_SHIP',
+  ]);
+  const STATUS_PAKET_KELUAR = new Set(['PICKED_UP', 'IN_TRANSIT', 'DELIVERED', 'FAILED', 'RETURNED']);
+  // ── Kartu "perlu perhatian" ───────────────────────────────────────────────
+  // Pembatalan memakai tanggal KEJADIAN yang diminta operator (kapan diajukan /
+  // kapan batal), bukan tanggal pesanan masuk. Keterlambatan tidak punya
+  // tanggal kejadian — ia dihitung dari tenggat `ship_by_date` terhadap hari ini.
+  const dalamRentang = (waktu: string | null): boolean => {
+    if (!waktu) return range.from === null && range.to === null;
+    const nilai = new Date(waktu).getTime();
+    return (range.from === null || nilai >= range.from.getTime()) && (range.to === null || nilai < range.to.getTime());
   };
 
-  const filtered = options.stage ? unified.filter((u) => u.stage === options.stage) : unified;
+  const hitungPerhatian = (daftar: typeof unified) => ({
+    pembatalanDiajukan: daftar.filter((o) => o.cancelCategory === 'DIAJUKAN' && dalamRentang(o.cancelRequestedAt)).length,
+    // Hanya batal sistem yang perlu perhatian (bukan "Unpaid Order").
+    batalSistem: daftar.filter(
+      (o) =>
+        o.cancelCategory === 'DIBATALKAN_SISTEM' &&
+        isSystemCancelNeedsAttention(o.cancelReason) &&
+        dalamRentang(o.cancelledAt),
+    ).length,
+    terlambat: daftar.filter((o) => o.lateRisk === 'TERLAMBAT').length,
+    besokBatal: daftar.filter((o) => o.lateRisk === 'BESOK_BATAL').length,
+    beresiko: daftar.filter((o) => o.lateRisk === 'BERESIKO').length,
+  });
+
+  const perhatian = hitungPerhatian(unified);
+
+  const paketJalanBelumDitutup = unified.filter(
+    (o) =>
+      // Pesanan batal bukan pekerjaan gudang — jangan dihitung sebagai anomali.
+      o.orderStatus !== 'CANCELLED' &&
+      STATUS_PAKET_KELUAR.has(String(o.shipmentStatus ?? '')) &&
+      STATUS_MASIH_DI_GUDANG.has(String(o.fulfillmentStatus ?? '')),
+  ).length;
+
+  const bucket = options.bucket ?? 'perluDiproses';
+  // `semua` sengaja tidak memakai `belongsToBucket` karena bucket itu harus
+  // juga menampilkan pesanan batal & selesai (untuk ditelusuri operator).
+  const cocokKategori = (o: (typeof unified)[number]): boolean => {
+    switch (kategori) {
+      case 'pembatalan':
+        return o.cancelCategory === 'DIAJUKAN' && dalamRentang(o.cancelRequestedAt);
+      case 'batalSistem':
+        return (
+          o.cancelCategory === 'DIBATALKAN_SISTEM' &&
+          isSystemCancelNeedsAttention(o.cancelReason) &&
+          dalamRentang(o.cancelledAt)
+        );
+      case 'terlambat':
+        return o.lateRisk === 'TERLAMBAT';
+      case 'besokBatal':
+        return o.lateRisk === 'BESOK_BATAL';
+      case 'beresiko':
+        return o.lateRisk === 'BERESIKO';
+      default:
+        return true;
+    }
+  };
+
+  const filtered = (
+    bucket === 'semua'
+      ? unified
+      : withQueue.filter((item) => belongsToBucket(bucket, item.queue)).map((item) => item.order)
+  ).filter(cocokKategori);
+
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   // Halaman yang diminta bisa berada di luar rentang, misalnya setelah operator
@@ -1043,8 +1211,14 @@ export async function getFulfillmentStation(
   return {
     warehouse,
     sort: options.sort ?? 'oldest',
-    stage: options.stage ?? null,
-    stages,
+    bucket,
+    range: {
+      from: range.from ? range.from.toISOString() : null,
+      to: range.to ? range.to.toISOString() : null,
+    },
+    kartu,
+    perhatian,
+    anomali: { paketJalanBelumDitutup },
     orders: filtered.slice(mulai, mulai + pageSize),
     page,
     pageSize,

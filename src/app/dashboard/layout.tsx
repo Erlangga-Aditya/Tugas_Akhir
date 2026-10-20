@@ -26,6 +26,7 @@ import { api } from '@/lib/api';
 import type { Permission } from '@/modules/auth/domain/permissions';
 import { AutoSyncStatus } from '@/components/AutoSyncStatus';
 import { PwaInstallPrompt } from '@/components/pwa-install-prompt';
+import { ThemeToggle } from '@/components/theme-toggle';
 
 /**
  * Menu dipertahankan sesedikit mungkin.
@@ -197,8 +198,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                         : `${orderBadge.count} pesanan menunggu diselesaikan`
                     }
                     style={{
-                      background: badgeIsFresh ? '#dc2626' : '#ef4444',
-                      color: '#ffffff',
+                      background: 'var(--danger)',
+                      color: 'var(--on-error)',
                       fontSize: 10.5,
                       fontWeight: 800,
                       padding: '2px 7px',
@@ -277,9 +278,15 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           </div>
 
           <div className="topbar-right" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <ThemeToggle />
             <AutoSyncStatus />
+            {/* Badge peran: kosmetik. Di ponsel disembunyikan lewat CSS
+                (`.topbar-right .badge`) supaya topbar muat 360px — dulu di sini
+                ada `style={{ display: 'inline-flex' }}` yang mengalahkan aturan
+                CSS, sehingga badge tetap tampil dan seluruh halaman bisa
+                digeser mendatar. */}
             {me?.role ? (
-              <span className="badge badge-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span className="badge badge-secondary role-badge">
                 <UserCheck size={12} aria-hidden />
                 {me.role}
               </span>

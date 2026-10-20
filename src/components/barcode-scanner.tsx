@@ -71,7 +71,14 @@ export function BarcodeScanner({
   hint,
   submitLabel = 'Proses',
   disabled = false,
-  autoFocus = true,
+  /**
+   * `false` secara default. Dulu `true`, dan efek di bawah memfokuskan input
+   * 150 ms setelah mount — di ponsel itu langsung membuka keyboard setiap kali
+   * halaman (atau komponen ini) dipasang ulang, termasuk saat operator hanya
+   * mengklik kartu penyaring. Fokus sekarang hanya diberikan bila operator
+   * memintanya lewat `focusRequest`.
+   */
+  autoFocus = false,
   withSound = true,
   autoStartCamera = false,
   focusRequest = 0,

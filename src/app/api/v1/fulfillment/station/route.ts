@@ -1,9 +1,8 @@
 import { type NextRequest } from 'next/server';
-import {
-  getFulfillmentStation,
-  STATION_STAGES,
-  type StationStage,
-} from '@/modules/fulfillment/application/fulfillment.usecase';
+import { getFulfillmentStation } from '@/modules/fulfillment/application/fulfillment.usecase';
+import { isQueueBucket } from '@/modules/fulfillment/domain/work-queue';
+import { isExceptionKategori } from '@/modules/fulfillment/domain/order-exceptions';
+import { isRangePreset, resolveRangePreset } from '@/modules/fulfillment/domain/date-range';
 import { successResponse, handleRouteError } from '@/shared/application/apiResponse';
 import {
   getAuthContext,
@@ -18,17 +17,19 @@ export const dynamic = 'force-dynamic';
 /**
  * GET /api/v1/fulfillment/station
  *
- * Satu endpoint untuk STASIUN KERJA (halaman Operasi Harian):
- * semua yang perlu dikerjakan operator hari ini, tanpa perlu pindah menu.
- *  - queue      : fulfillment order aktif (WAITING_STOCK … READY_TO_SHIP) + item + shortfall + AWB
- *  - newOrders  : pesanan baru yang belum masuk antrian (perlu "Proses")
- *  - warehouse  : gudang default yang dipakai untuk memproses
+ * Satu endpoint untuk halaman "Pesanan & Pengiriman": daftar pesanan pada
+ * rentang tanggal tertentu + tiga angka ringkasan yang tampil sebagai kartu.
  *
- * Mendukung penyaringan per tahap dan pagination:
- *   ?stage=BARU|MENUNGGU_STOK|SIAP_DIKEMAS|SIAP_KIRIM|DIKIRIM|DIBATALKAN
+ * Parameter:
+ *   ?range=today|yesterday|last7|last30|all   (default: all)
+ *   ?bucket=baru|sudahResi|perluDiproses|semua (default: perluDiproses)
+ *   ?sort=oldest|newest
+ *   ?search=<nomor pesanan | nomor resi | nama pembeli | SKU>
  *   ?page=1&pageSize=20
- * Jawabannya menyertakan `total`, `totalPages`, dan `truncated` supaya
- * antarmuka tidak pernah menyembunyikan data tanpa memberi tahu.
+ *
+ * Angka kartu (`kartu`) SELALU dihitung dari seluruh pesanan pada rentang itu,
+ * bukan dari halaman yang tampil, sehingga tidak berubah saat operator
+ * berpindah halaman.
  */
 export async function GET(request: NextRequest) {
   const requestId = getRequestId(request);
@@ -37,17 +38,26 @@ export async function GET(request: NextRequest) {
     assertPermission(ctx, 'page.orders');
     const sortParam = getQueryParam(request, 'sort');
     const { page, pageSize } = parsePagination(request);
-    const stageParam = getQueryParam(request, 'stage');
-    const stage = STATION_STAGES.includes(stageParam as StationStage)
-      ? (stageParam as StationStage)
-      : null;
+
+    // Nilai yang tidak dikenal diabaikan ke default yang aman, bukan diteruskan:
+    // permintaan salah tidak boleh menghasilkan daftar yang berbeda diam-diam.
+    const rangeParam = getQueryParam(request, 'range');
+    const preset = isRangePreset(rangeParam) ? rangeParam : 'all';
+    const bucketParam = getQueryParam(request, 'bucket');
+    const kategoriParam = getQueryParam(request, 'kategori');
+    const bucket = isQueueBucket(bucketParam) ? bucketParam : 'perluDiproses';
+
     const station = await getFulfillmentStation(ctx.tenantId, {
       sort: sortParam === 'newest' ? 'newest' : 'oldest',
-      stage,
+      bucket,
+      range: resolveRangePreset(preset, new Date()),
+      search: getQueryParam(request, 'search'),
+      ...(isExceptionKategori(kategoriParam) ? { kategori: kategoriParam } : {}),
       page,
       pageSize,
     });
-    return successResponse(station, { requestId });
+
+    return successResponse({ ...station, rangePreset: preset }, { requestId });
   } catch (error) {
     return handleRouteError(error, requestId, request);
   }

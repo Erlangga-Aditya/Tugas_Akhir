@@ -9,7 +9,7 @@ import { processOrderForFulfillment } from '@/modules/fulfillment/application/fu
 import { NotFoundError, ExternalIntegrationError } from '@/shared/errors/AppError';
 import { auditLog } from '@/modules/audit/application/auditLog.service';
 import { logger } from '@/shared/observability/logger';
-import type { ShopCredentials, ArrangeShipmentInput } from '../domain/marketplace.adapter';
+import type { ShopCredentials, ArrangeShipmentInput, SyncOptions } from '../domain/marketplace.adapter';
 import { broadcastSystemEvent } from '@/lib/sse';
 import { getShopeeAppConfig } from './appConfig.service';
 import { computePlatformFee, toAmount } from '../domain/escrow-fee-mapping';
@@ -220,19 +220,89 @@ async function resolveVariant(
   return null;
 }
 
+/**
+ * Otomatis daftarkan produk dan varian yang belum ada di database lokal
+ * saat menarik pesanan lama/historis.
+ * Menjamin tidak ada pesanan historis yang dilewati hanya karena produk
+ * tidak lagi aktif atau belum tersinkronisasi.
+ */
+async function autoRegisterMissingVariant(
+  tenantId: string,
+  shopId: string,
+  item: {
+    externalItemId?: string;
+    externalVariantId?: string;
+    sku?: string;
+    name?: string;
+    unitPrice?: number;
+  },
+) {
+  const productName = item.name?.trim() || `Produk Shopee ${item.externalItemId || ''}`.trim() || 'Produk Marketplace';
+  const sku = item.sku?.trim() || (item.externalVariantId ? `SP-${item.externalVariantId}` : `SP-${item.externalItemId || Date.now()}`);
+
+  let product = await prisma.product.findFirst({
+    where: { tenantId, name: productName },
+  });
+  if (!product) {
+    product = await prisma.product.create({
+      data: {
+        tenantId,
+        name: productName,
+        status: 'ACTIVE',
+      },
+    });
+  }
+
+  let variant = await prisma.productVariant.findFirst({
+    where: { productId: product.id, sku },
+  });
+  if (!variant) {
+    variant = await prisma.productVariant.create({
+      data: {
+        productId: product.id,
+        sku,
+        name: item.name?.trim() || sku,
+        status: 'ACTIVE',
+      },
+    });
+  }
+
+  if (item.externalVariantId && item.externalVariantId !== '0') {
+    await prisma.externalProductMapping.upsert({
+      where: { shopId_externalVariantId: { shopId, externalVariantId: item.externalVariantId } },
+      create: {
+        shopId,
+        variantId: variant.id,
+        externalProductId: item.externalItemId || '0',
+        externalVariantId: item.externalVariantId,
+      },
+      update: {
+        variantId: variant.id,
+      },
+    }).catch(() => {});
+  }
+
+  return variant;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Public functions
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Sync orders from Shopee → local DB.
- * - Uses cursor-based pagination (7-day default window)
- * - Maps items via ExternalProductMapping first, SKU as fallback
- * - Skips unmapped items (not orders) to avoid data loss
+ * - Uses cursor-based pagination (14-day default window)
+ * - Also checks update_time to capture status changes for older orders
+ * - Auto-creates Product + Variant for historical/unmapped items to prevent order loss
  * - Auto-creates Shipment when order has a tracking number
  * - Auto-processes CONFIRMED orders (reserve stock + create fulfillment)
  */
-export async function triggerOrderSync(tenantId: string, shopId: string, actorId: string) {
+export async function triggerOrderSync(
+  tenantId: string,
+  shopId: string,
+  actorId: string,
+  options?: SyncOptions,
+) {
   const { conn, creds } = await loadConnection(tenantId, shopId);
   const fresh = await ensureFreshToken(conn.id, creds);
   const credentials = buildShopCredentials(fresh);
@@ -247,7 +317,33 @@ export async function triggerOrderSync(tenantId: string, shopId: string, actorId
   });
 
   try {
-    const orders = await shopee.getOrders(credentials, {});
+    // 1. Ambil pesanan berdasarkan rentang waktu create_time
+    const createdOrders = await shopee.getOrders(credentials, options ?? {});
+    const orderMap = new Map<string, (typeof createdOrders)[0]>();
+    for (const o of createdOrders) {
+      orderMap.set(o.externalOrderId, o);
+    }
+
+    // 2. Jika sinkronisasi berkala (tanpa fromDate khusus), juga periksa perubahan
+    // status pada pesanan yang di-update 14 hari terakhir (mis. pesanan lama yang baru COMPLETED/CANCELLED).
+    if (!options?.fromDate) {
+      try {
+        const updatedOrders = await shopee.getOrders(credentials, {
+          fromDate: new Date(Date.now() - 14 * 24 * 3600 * 1000),
+          toDate: new Date(),
+          timeRangeField: 'update_time',
+        });
+        for (const o of updatedOrders) {
+          if (!orderMap.has(o.externalOrderId)) {
+            orderMap.set(o.externalOrderId, o);
+          }
+        }
+      } catch (updErr) {
+        logger.warn('Pengecekan update_time dilewati', { error: (updErr as Error).message });
+      }
+    }
+
+    const orders = Array.from(orderMap.values());
     const recordsRead = orders.length;
     let recordsWritten = 0;
     let skippedOrders = 0;
@@ -257,18 +353,27 @@ export async function triggerOrderSync(tenantId: string, shopId: string, actorId
     logger.info(`Shopee sync: ${orders.length} pesanan diterima dari API`, { shopId: fresh.shopId });
 
     for (const mOrder of orders) {
-      // Build local item list (skip unmapped items, but not the whole order)
+      // Build local item list (resolve existing or auto-register missing variant)
       const items: Array<{ variantId: string; quantity: number; unitPrice?: number }> = [];
       const unmappedSkus: string[] = [];
 
       for (const mi of mOrder.items) {
-        const variant = await resolveVariant(
+        let variant = await resolveVariant(
           tenantId,
           shopId,
           mi.externalVariantId,
           mi.sku,
           mi.externalItemId,
         );
+        if (!variant) {
+          try {
+            variant = await autoRegisterMissingVariant(tenantId, shopId, mi);
+          } catch (regErr) {
+            logger.warn(`Gagal auto-register varian untuk item ${mi.sku || mi.externalVariantId}`, {
+              error: (regErr as Error).message,
+            });
+          }
+        }
         if (variant) {
           items.push({ variantId: variant.id, quantity: mi.quantity, unitPrice: mi.unitPrice });
         } else {
@@ -281,10 +386,9 @@ export async function triggerOrderSync(tenantId: string, shopId: string, actorId
       }
 
       if (items.length === 0) {
-        // All items unmapped → skip this order but log clearly
+        // Semua item tidak bisa diimpor sama sekali → skip order
         logger.warn(
-          `Order ${mOrder.externalOrderId} dilewati: semua item tidak ter-mapping (SKU: ${unmappedSkus.join(', ')}). ` +
-            `Lakukan sinkronisasi produk terlebih dahulu.`,
+          `Order ${mOrder.externalOrderId} dilewati: item tidak dapat didaftarkan (SKU: ${unmappedSkus.join(', ')}).`,
           { externalOrderId: mOrder.externalOrderId },
         );
         skippedOrders++;
@@ -308,6 +412,14 @@ export async function triggerOrderSync(tenantId: string, shopId: string, actorId
         buyerNote: mOrder.buyerNote,
         shippingAddress: mOrder.shippingAddress,
         status: mapShopeeStatusToInternal(mOrder.rawStatus),
+        // Status mentah disimpan apa adanya: inilah yang membedakan
+        // "Belum diproses" (READY_TO_SHIP) dari "Telah diproses" (PROCESSED).
+        externalStatus: mOrder.rawStatus || undefined,
+        // Jejak pembatalan (siapa & kenapa) — dasar kartu Pembatalan Diajukan
+        // dan Batal oleh Sistem.
+        cancelBy: mOrder.cancelBy ?? undefined,
+        cancelReason: mOrder.cancelReason ?? undefined,
+        buyerCancelReason: mOrder.buyerCancelReason ?? undefined,
         // Jumlah paket asli Shopee — dasar keputusan package_number di ship_order.
         ...(mOrder.packageCount != null ? { packageCount: mOrder.packageCount } : {}),
         items,
@@ -455,6 +567,245 @@ export async function triggerOrderSync(tenantId: string, shopId: string, actorId
   }
 }
 
+export interface HistoricalSyncInput {
+  fromDate?: Date | string;
+  toDate?: Date | string;
+  months?: number;
+  chunkDays?: number;
+}
+
+export interface HistoricalSyncOutput {
+  syncRunId: string;
+  totalChunks: number;
+  processedChunks: number;
+  recordsRead: number;
+  recordsWritten: number;
+  fromDate: string;
+  toDate: string;
+  durationMs: number;
+}
+
+/**
+ * Sinkronisasi data historis Shopee (rentang waktu panjang / berbulan-bulan hingga bertahun-tahun).
+ * Shopee Open API v2 membatasi get_order_list maksimal 15 hari per pemanggilan.
+ * Fungsi ini membagi rentang waktu menjadi potongan (chunks) 14 hari, lalu berjalan mundur
+ * dari tanggal terbaru ke tanggal terlama dengan jeda aman antar permintaan untuk mematuhi rate limit.
+ * Pesanan dan varian diimpor secara idempoten tanpa duplikasi.
+ */
+export async function triggerHistoricalSync(
+  tenantId: string,
+  shopId: string,
+  actorId: string,
+  input: HistoricalSyncInput = {},
+): Promise<HistoricalSyncOutput> {
+  const { conn, creds } = await loadConnection(tenantId, shopId);
+  const fresh = await ensureFreshToken(conn.id, creds);
+  const credentials = buildShopCredentials(fresh);
+
+  const now = new Date();
+  const toDate = input.toDate ? new Date(input.toDate) : now;
+  let fromDate: Date;
+  if (input.fromDate) {
+    fromDate = new Date(input.fromDate);
+  } else if (input.months && input.months > 0) {
+    fromDate = new Date(toDate.getTime() - input.months * 30 * 24 * 3600 * 1000);
+  } else {
+    // Default 6 tahun lalu (menyeluruh untuk seller lama)
+    fromDate = new Date(toDate.getTime() - 6 * 365 * 24 * 3600 * 1000);
+  }
+
+  const chunkDays = input.chunkDays && input.chunkDays > 0 && input.chunkDays <= 14 ? input.chunkDays : 14;
+  const chunkMs = chunkDays * 24 * 3600 * 1000;
+  const totalChunks = Math.max(1, Math.ceil((toDate.getTime() - fromDate.getTime()) / chunkMs));
+
+  const syncRun = await prisma.syncRun.create({
+    data: {
+      tenantId,
+      shopId,
+      operation: 'historical_sync',
+      status: 'RUNNING',
+      metadataJson: {
+        totalChunks,
+        fromDate: fromDate.toISOString(),
+        toDate: toDate.toISOString(),
+        chunkDays,
+      },
+    },
+  });
+
+  const startTime = Date.now();
+  let processedChunks = 0;
+  let totalRead = 0;
+  let totalWritten = 0;
+
+  try {
+    let currentTo = toDate;
+
+    while (currentTo > fromDate) {
+      const currentFrom = new Date(Math.max(fromDate.getTime(), currentTo.getTime() - chunkMs));
+      processedChunks++;
+
+      logger.info(
+        `Shopee historical sync [chunk ${processedChunks}/${totalChunks}]: ` +
+          `${currentFrom.toISOString().slice(0, 10)} -> ${currentTo.toISOString().slice(0, 10)}`,
+        { shopId: fresh.shopId },
+      );
+
+      try {
+        const orders = await shopee.getOrders(credentials, {
+          fromDate: currentFrom,
+          toDate: currentTo,
+          timeRangeField: 'create_time',
+        });
+
+        totalRead += orders.length;
+
+        for (const mOrder of orders) {
+          const items: Array<{ variantId: string; quantity: number; unitPrice?: number }> = [];
+
+          for (const mi of mOrder.items) {
+            let variant = await resolveVariant(
+              tenantId,
+              shopId,
+              mi.externalVariantId,
+              mi.sku,
+              mi.externalItemId,
+            );
+            if (!variant) {
+              try {
+                variant = await autoRegisterMissingVariant(tenantId, shopId, mi);
+              } catch (regErr) {
+                logger.warn(`Gagal auto-register varian item historis ${mi.sku || mi.externalVariantId}`, {
+                  error: (regErr as Error).message,
+                });
+              }
+            }
+            if (variant) {
+              items.push({ variantId: variant.id, quantity: mi.quantity, unitPrice: mi.unitPrice });
+            }
+          }
+
+          if (items.length === 0) continue;
+
+          const result = await importOrder(tenantId, {
+            shopId,
+            externalOrderId: mOrder.externalOrderId,
+            placedAt: mOrder.placedAt,
+            shipByAt: mOrder.shipByAt,
+            buyerName: mOrder.buyerName,
+            buyerPhone: mOrder.buyerPhone,
+            buyerNote: mOrder.buyerNote,
+            shippingAddress: mOrder.shippingAddress,
+            status: mapShopeeStatusToInternal(mOrder.rawStatus),
+        // Status mentah disimpan apa adanya: inilah yang membedakan
+        // "Belum diproses" (READY_TO_SHIP) dari "Telah diproses" (PROCESSED).
+        externalStatus: mOrder.rawStatus || undefined,
+        // Jejak pembatalan (siapa & kenapa) — dasar kartu Pembatalan Diajukan
+        // dan Batal oleh Sistem.
+        cancelBy: mOrder.cancelBy ?? undefined,
+        cancelReason: mOrder.cancelReason ?? undefined,
+        buyerCancelReason: mOrder.buyerCancelReason ?? undefined,
+            ...(mOrder.packageCount != null ? { packageCount: mOrder.packageCount } : {}),
+            items,
+            currency: mOrder.payment?.currency ?? undefined,
+            totalAmount: mOrder.payment?.totalAmount ?? undefined,
+            itemSubtotal: mOrder.payment?.itemSubtotal ?? undefined,
+            sellerDiscount: mOrder.payment?.sellerDiscount ?? undefined,
+            shopeeDiscount: mOrder.payment?.shopeeDiscount ?? undefined,
+            buyerShippingFee: mOrder.payment?.buyerShippingFee ?? undefined,
+            shippingFeeDiscount: mOrder.payment?.shippingFeeDiscount ?? undefined,
+            platformFee: mOrder.payment?.platformFee ?? undefined,
+            escrowAmount: mOrder.payment?.escrowAmount ?? undefined,
+            paymentMethod: mOrder.payment?.paymentMethod ?? undefined,
+            isCod: mOrder.payment?.isCod,
+            paidAt: mOrder.payment?.paidAt ?? undefined,
+            packageNumber: mOrder.payment?.packageNumber ?? undefined,
+            incomeJson: mOrder.payment?.income ?? undefined,
+          });
+
+          if (mOrder.trackingNumber) {
+            await upsertShipment(tenantId, result.orderId, mOrder.trackingNumber, mOrder.carrier, mOrder.rawStatus);
+          }
+
+          if (result.created) {
+            totalWritten++;
+          }
+        }
+      } catch (chunkErr) {
+        logger.warn(`Shopee historical sync chunk ${processedChunks} gagal dilewati`, {
+          chunk: processedChunks,
+          error: (chunkErr as Error).message,
+        });
+      }
+
+      currentTo = currentFrom;
+      // Jeda 350ms antar-chunk untuk menjaga rate limit Shopee
+      await new Promise((r) => setTimeout(r, 350));
+    }
+
+    const durationMs = Date.now() - startTime;
+
+    await prisma.syncRun.update({
+      where: { id: syncRun.id },
+      data: {
+        status: 'COMPLETED',
+        recordsRead: totalRead,
+        recordsWritten: totalWritten,
+        finishedAt: new Date(),
+        metadataJson: {
+          totalChunks,
+          processedChunks,
+          fromDate: fromDate.toISOString(),
+          toDate: toDate.toISOString(),
+          durationMs,
+        },
+      },
+    });
+
+    await auditLog({
+      tenantId,
+      actorId,
+      action: 'historical_sync_complete',
+      entityType: 'Shop',
+      entityId: shopId,
+      metadata: { totalRead, totalWritten, totalChunks, processedChunks, durationMs },
+    });
+
+    broadcastSystemEvent('orders:synced', {
+      tenantId,
+      shopId,
+      data: {
+        recordsRead: totalRead,
+        recordsWritten: totalWritten,
+        historical: true,
+      },
+    });
+
+    logger.info(
+      `Shopee historical sync selesai: ${totalWritten} pesanan baru diimpor dari ${totalRead} yang terbaca dalam ${processedChunks} chunks`,
+      { shopId: fresh.shopId, durationMs },
+    );
+
+    return {
+      syncRunId: syncRun.id,
+      totalChunks,
+      processedChunks,
+      recordsRead: totalRead,
+      recordsWritten: totalWritten,
+      fromDate: fromDate.toISOString(),
+      toDate: toDate.toISOString(),
+      durationMs,
+    };
+  } catch (err) {
+    const msg = (err as Error).message || 'Historical sync gagal';
+    await prisma.syncRun.update({
+      where: { id: syncRun.id },
+      data: { status: 'FAILED', errorMessage: msg, finishedAt: new Date() },
+    });
+    throw new ExternalIntegrationError('shopee', msg);
+  }
+}
+
 /**
  * Sync products & variants from Shopee → local DB.
  * - Upserts Product + ProductVariant records
@@ -579,21 +930,36 @@ export async function triggerProductSync(tenantId: string, shopId: string, actor
           },
         });
 
-        // Initialize InventoryBalance for new variant (stock = Shopee stock or 0)
+        // Sediakan baris saldo stok gudang untuk varian baru - TANPA mengisi
+        // angkanya dari Shopee.
+        //
+        // Sebelumnya angka stok dari Shopee ditulis ke saldo gudang, dan
+        // setiap sinkronisasi menimpanya lagi. Dua akibatnya serius:
+        //
+        //   1. Angka stok gudang bukan hasil hitungan gudang, melainkan angka
+        //      yang penjual isi sendiri di Seller Center - dan angka itu boleh
+        //      diisi apa saja, tidak pernah diverifikasi.
+        //   2. Setiap sinkronisasi produk MENIMPA hitungan gudang yang sudah
+        //      benar. Hasil opname hilang tanpa jejak, dan stok yang muncul di
+        //      layar tidak bisa dipertanggungjawabkan.
+        //
+        // Stok gudang hanya boleh berubah lewat jalur yang tercatat di mutasi
+        // stok: penerimaan barang, penyesuaian, dan pengurangan karena pesanan.
+        // Karena itu barisnya dibuat bernilai nol dan TIDAK pernah diperbarui
+        // dari sini. `skipDuplicates` membuat baris yang sudah ada dibiarkan
+        // apa adanya, termasuk saat dua sinkronisasi berjalan bersamaan.
         if (warehouse) {
-          const stockQty = mv.stock ?? 0;
-          await prisma.inventoryBalance.upsert({
-            where: { warehouseId_variantId: { warehouseId: warehouse.id, variantId: localVariant.id } },
-            create: {
-              warehouseId: warehouse.id,
-              variantId: localVariant.id,
-              onHand: stockQty,
-              reserved: 0,
-              blocked: 0,
-            },
-            update: {
-              onHand: stockQty, // sync with Shopee stock
-            },
+          await prisma.inventoryBalance.createMany({
+            data: [
+              {
+                warehouseId: warehouse.id,
+                variantId: localVariant.id,
+                onHand: 0,
+                reserved: 0,
+                blocked: 0,
+              },
+            ],
+            skipDuplicates: true,
           });
         }
       }
@@ -1467,10 +1833,14 @@ async function handleOrderStatusPush(
   }
 
   if (order.status !== status) {
+    const rawStatus = String(data.status ?? '');
     await prisma.$transaction(async (tx) => {
       await tx.order.update({
         where: { id: order.id },
-        data: { status: status as import('@prisma/client').OrderStatus },
+        data: {
+          status: status as import('@prisma/client').OrderStatus,
+          ...(rawStatus ? { externalStatus: rawStatus } : {}),
+        },
       });
       await tx.orderStatusHistory.create({
         data: {

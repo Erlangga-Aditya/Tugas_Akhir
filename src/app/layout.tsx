@@ -40,9 +40,35 @@ export const metadata: Metadata = {
   },
 };
 
+/**
+ * Skrip kecil yang berjalan SEBELUM halaman digambar.
+ *
+ * Tanpa skrip ini, pengguna yang memilih tema gelap akan melihat kedipan putih
+ * setiap kali berpindah halaman, karena React baru memasang atribut tema
+ * setelah hidrasi. Nilai yang dipakai sama dengan `THEME_STORAGE_KEY` di
+ * `components/theme-toggle.tsx`.
+ */
+const THEME_INIT_SCRIPT = `
+(function () {
+  try {
+    var pilihan = localStorage.getItem('efulfill-theme');
+    var gelap = pilihan === 'dark' || ((pilihan === null || pilihan === 'system')
+      && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    var el = document.documentElement;
+    el.setAttribute('data-theme', gelap ? 'dark' : 'light');
+    el.style.colorScheme = gelap ? 'dark' : 'light';
+  } catch (e) {
+    /* localStorage bisa diblokir; pakai tema terang sebagai cadangan. */
+  }
+})();
+`;
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="id">
+    <html lang="id" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body className={roboto.variable}>
         <ServiceWorkerRegistrar />
         {children}

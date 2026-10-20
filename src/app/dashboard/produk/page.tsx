@@ -378,7 +378,9 @@ export default function ProdukPage() {
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 8 }}>
+        {/* Baris chip: memakai kelas `filter-chips` supaya membungkus /
+            bisa digeser di ponsel, bukan melebar 529px seperti flex biasa. */}
+        <div className="filter-chips">
           {[
             { label: 'Aktif (Katalog)', value: 'ALL' },
             { label: 'Hanya ACTIVE', value: 'ACTIVE' },

@@ -7,13 +7,14 @@ import {
   AlertTriangle,
   ArrowDownWideNarrow,
   ArrowUpWideNarrow,
+  Ban,
+  Clock,
   Boxes,
+  CalendarDays,
   CheckCircle2,
   ClipboardList,
   ExternalLink,
-  Handshake,
   Info,
-  Plus,
   PackageCheck,
   Printer,
   RefreshCw,
@@ -21,221 +22,85 @@ import {
   Truck,
   XCircle,
 } from 'lucide-react';
-import { api, formatDate, openOfficialLabel } from '@/lib/api';
-import { deriveOperatorWorkflow } from '@/modules/fulfillment/domain/operator-workflow';
+import { api, openOfficialLabel } from '@/lib/api';
 import { usePermission } from '@/hooks/usePermission';
 import { Alert, EmptyState, ErrorState, LoadingState, PageHeader } from '@/components/ui';
 import { BarcodeScanner, playScanFeedback } from '@/components/barcode-scanner';
 import { StockPanel } from '@/components/stock-panel';
+import { RANGE_LABEL, RANGE_PRESETS, type RangePreset } from '@/modules/fulfillment/domain/date-range';
+import type { QueueBucket } from '@/modules/fulfillment/domain/work-queue';
+import type { ExceptionKategori } from '@/modules/fulfillment/domain/order-exceptions';
+import { OrderCard } from './order-card';
+import { type ScanOutcome, type StationOrder, type StationResponse } from './types';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Tipe data (mengikuti /api/v1/fulfillment/station)
-// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Nada & judul panel hasil scan. Dikumpulkan di satu tempat supaya tidak ada
+ * lagi rangkaian ternary berlapis yang mudah salah saat kode hasil scan
+ * bertambah (`ALREADY_IN_TRANSIT`, `PARCEL_RETURNED`, …).
+ */
+type ScanTone = 'success' | 'info' | 'warning' | 'danger';
 
-// type Stage = 'BARU' | 'MENUNGGU_STOK' | 'SIAP_DIKEMAS' | 'SIAP_KIRIM' | 'DIKIRIM';
+const NADA_HASIL: Record<ScanOutcome['code'], ScanTone> = {
+  PACKED: 'success',
+  ALREADY_PACKED: 'info',
+  ALREADY_HANDED_OVER: 'info',
+  ALREADY_IN_TRANSIT: 'info',
+  ALREADY_DELIVERED: 'info',
+  CANCELLED: 'warning',
+  PARCEL_RETURNED: 'warning',
+  NEEDS_PICKING: 'warning',
+  NEEDS_SHIPMENT: 'warning',
+  WAITING_STOCK: 'warning',
+  NOT_QUEUED: 'warning',
+  EXCEPTION: 'danger',
+  NOT_FOUND: 'danger',
+};
 
-interface OrderItemRow {
-  id: string;
-  variantId: string;
-  sku: string;
-  variantName: string;
-  productName: string;
-  quantity: number;
-  fulfilledQuantity: number;
-  available: number;
-  shortfall: number;
-}
+const JUDUL_HASIL: Record<ScanOutcome['code'], string> = {
+  PACKED: 'Pesanan selesai diproses — stok gudang sudah berkurang',
+  ALREADY_PACKED: 'Pesanan ini sudah pernah dipacking',
+  ALREADY_HANDED_OVER: 'Pesanan sudah diserahkan ke kurir',
+  ALREADY_IN_TRANSIT: 'Paket sudah dalam perjalanan — tidak perlu dipindai',
+  ALREADY_DELIVERED: 'Pesanan sudah diterima pembeli',
+  CANCELLED: 'Pesanan dibatalkan — resi tidak perlu diproses',
+  PARCEL_RETURNED: 'Paket gagal kirim / dikembalikan',
+  NEEDS_PICKING: 'Picking belum selesai',
+  NEEDS_SHIPMENT: 'Resi belum ada — atur pengiriman dulu',
+  WAITING_STOCK: 'Stok belum cukup untuk dipacking',
+  NOT_QUEUED: 'Pesanan belum masuk antrian fulfillment',
+  EXCEPTION: 'Pesanan bermasalah — periksa halaman fulfillment',
+  NOT_FOUND: 'Resi / nomor pesanan tidak dikenali',
+};
 
-interface StationOrder {
-  orderId: string;
-  externalOrderId: string;
-  buyerName: string | null;
-  buyerPhone: string | null;
-  shopName: string;
-  provider: string;
-  placedAt: string;
-  shipByAt: string | null;
-  priorityLevel: string | null;
-  orderStatus: string;
-  fulfillmentId: string | null;
-  fulfillmentStatus: string | null;
-  awb: string | null;
-  carrier: string | null;
-  canArrangeShipment: boolean;
-  /** Barang hanya boleh dinyatakan siap kirim setelah nomor resi terbit. */
-  canPack: boolean;
-  stage: Stage;
-  items: OrderItemRow[];
-  totalUnits: number;
-  shortfallUnits: number;
-}
+const WARNA_NADA: Record<ScanTone, string> = {
+  success: 'var(--success)',
+  info: 'var(--secondary)',
+  warning: 'var(--warning)',
+  danger: 'var(--danger)',
+};
 
-interface StationResponse {
-  warehouse: { id: string; name: string; code: string } | null;
-  sort: 'oldest' | 'newest';
-  stages: {
-    baru: number;
-    menungguStok: number;
-    siapDikemas: number;
-    siapKirim: number;
-    dikirim: number;
-    dibatalkan: number;
-  };
-  stage: Stage | null;
-  orders: StationOrder[];
-  page: number;
-  pageSize: number;
-  total: number;
-  totalPages: number;
-  /** true bila kandidat terpotong pagar pengaman server; WAJIB diberitahukan. */
-  truncated: boolean;
-  generatedAt: string;
-}
+/**
+ * Halaman kerja operator: pesanan masuk → ambil resi → scan resi → serahkan.
+ *
+ * Prinsip yang dipegang di sini:
+ *  - Aksi apa yang boleh dilakukan TIDAK ditentukan di halaman ini. Server
+ *    mengirim `workflow` per pesanan (satu sumber: `domain/operator-workflow`).
+ *  - Angka kartu datang dari server dan dihitung dari seluruh pesanan pada
+ *    rentang tanggal yang dipilih, bukan dari halaman yang sedang tampil.
+ *  - Filter tidak pernah me-remount halaman (layar penuh hanya saat pemuatan
+ *    pertama), supaya pemindai tidak merebut fokus dan keyboard tidak terbuka
+ *    sendiri di ponsel.
+ */
 
-/** Batas operasi massal di sisi server. Disamakan supaya operator diberi tahu sebelum menekan tombol, bukan gagal setelahnya. */
+/** Batas operasi massal di sisi server. */
 const BATAS_MASSAL = 50;
+/** Cache jawaban di sisi klien: hindari permintaan ulang saat operator
+ *  bolak-balik mengklik kartu/rentang yang sama dalam hitungan detik. */
+const CACHE_TTL_MS = 15_000;
+const SEARCH_DEBOUNCE_MS = 350;
 
-interface ScanOutcome {
-  code:
-    | 'PACKED'
-    | 'ALREADY_PACKED'
-    | 'ALREADY_HANDED_OVER'
-    | 'NEEDS_SHIPMENT'
-    | 'NEEDS_PICKING'
-    | 'WAITING_STOCK'
-    | 'NOT_QUEUED'
-    | 'EXCEPTION'
-    | 'NOT_FOUND';
-  message: string;
-  stockDeducted: boolean;
-  deductedUnits: number;
-  needsConfirmation: 'PICKING' | 'NEGATIVE_STOCK' | null;
-  shortfalls: Array<{ sku: string; productName: string; required: number; available: number; missing: number }>;
-  order: { id: string; externalOrderId: string; canPrintOfficialLabel: boolean } | null;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Halaman
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Bagian tampilan yang dipakai berulang
-// ─────────────────────────────────────────────────────────────────────────────
-
-type Stage = 'BARU' | 'MENUNGGU_STOK' | 'SIAP_DIKEMAS' | 'SIAP_KIRIM' | 'DIKIRIM' | 'DIBATALKAN';
-
-const STAGE_LABEL: Record<Stage, string> = {
-  BARU: 'Perlu Diproses',
-  MENUNGGU_STOK: 'Menunggu Stok',
-  SIAP_DIKEMAS: 'Siap Dikemas',
-  SIAP_KIRIM: 'Siap Kirim',
-  DIKIRIM: 'Sudah Dikirim',
-  DIBATALKAN: 'Dibatalkan',
-};
-
-const STAGE_TONE: Record<Stage, string> = {
-  BARU: 'var(--warning, #f59e0b)',
-  MENUNGGU_STOK: 'var(--danger, #ef4444)',
-  SIAP_DIKEMAS: 'var(--secondary, #7c3aed)',
-  SIAP_KIRIM: 'var(--success, #10b981)',
-  DIKIRIM: 'var(--muted)',
-  DIBATALKAN: 'var(--danger, #ef4444)',
-};
-
-/** Panduan 4 langkah supaya operator baru langsung paham alurnya. */
-function StepGuide() {
-  const steps = [
-    { no: 1, title: 'Pesanan masuk', desc: 'Otomatis dari Shopee' },
-    { no: 2, title: 'Ambil resi', desc: 'Klik "Ambil Resi dari Shopee"' },
-    { no: 3, title: 'Scan resi', desc: 'Stok gudang otomatis berkurang' },
-    { no: 4, title: 'Serahkan ke kurir', desc: 'Paket selesai diproses' },
-  ];
-  return (
-    <div className="card mb20">
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-        {steps.map((s) => (
-          <div key={s.no} style={{ display: 'flex', alignItems: 'center', gap: 10, flex: '1 1 220px' }}>
-            <span
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: '50%',
-                background: 'var(--primary-container, #e0f2fe)',
-                color: 'var(--primary, #0284c7)',
-                fontWeight: 800,
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-              }}
-            >
-              {s.no}
-            </span>
-            <div>
-              <div style={{ fontWeight: 700, fontSize: 13 }}>{s.title}</div>
-              <div className="small muted">{s.desc}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ItemTable({
-  items,
-  onAddStock,
-}: {
-  items: OrderItemRow[];
-  onAddStock?: (item: OrderItemRow) => void;
-}) {
-  return (
-    <div className="table-wrap">
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Produk</th>
-            <th>Kode (SKU)</th>
-            <th className="num">Jumlah</th>
-            <th className="num">Stok gudang</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((it) => (
-            <tr key={it.id}>
-              <td>
-                <div style={{ fontWeight: 600 }}>{it.productName}</div>
-                {it.variantName && it.variantName !== it.productName ? (
-                  <div className="small muted">Varian: {it.variantName}</div>
-                ) : null}
-              </td>
-              <td>
-                <code className="mono">{it.sku}</code>
-              </td>
-              <td className="num">{it.quantity}</td>
-              <td className="num">
-                {it.shortfall > 0 ? (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <span style={{ color: 'var(--danger)', fontWeight: 700 }}>
-                      {it.available} (kurang {it.shortfall})
-                    </span>
-                    {onAddStock && (
-                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => onAddStock(it)}>
-                        <Plus size={12} aria-hidden />
-                        <span>Tambah stok</span>
-                      </button>
-                    )}
-                  </span>
-                ) : (
-                  <span style={{ color: 'var(--success)', fontWeight: 600 }}>{it.available}</span>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+function rupiahNol(n: number): string {
+  return n.toLocaleString('id-ID');
 }
 
 export default function PesananPengirimanPage() {
@@ -245,86 +110,208 @@ export default function PesananPengirimanPage() {
   const [notice, setNotice] = useState<{ tone: 'success' | 'danger' | 'info' | 'warning'; text: string } | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [printingLabelId, setPrintingLabelId] = useState<string | null>(null);
+
   const [sort, setSort] = useState<'oldest' | 'newest'>('oldest');
-  const [stageFilter, setStageFilter] = useState<'SEMUA' | Stage>('SEMUA');
+  const [bucket, setBucket] = useState<QueueBucket>('perluDiproses');
+  /** Saringan "perlu perhatian": pembatalan / keterlambatan. */
+  const [kategori, setKategori] = useState<ExceptionKategori | null>(null);
+  const [range, setRange] = useState<RangePreset>('all');
   const [page, setPage] = useState(1);
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+
   const [outcome, setOutcome] = useState<ScanOutcome | null>(null);
+  const [reconciling, setReconciling] = useState(false);
   const [stockOpen, setStockOpen] = useState(false);
   const [stockVariantId, setStockVariantId] = useState<string | null>(null);
   const [now, setNow] = useState<Date | null>(null);
   const [scannerFocusRequest, setScannerFocusRequest] = useState(0);
-  /**
-   * Pesanan yang dicentang untuk diproses sekaligus. Disimpan di state biasa
-   * supaya jumlah terpilih ikut ter-render di panel bulk.
-   */
+
   const [picked, setPicked] = useState<string[]>([]);
   const [bulkBusy, setBulkBusy] = useState(false);
-  // Staff boleh melihat halaman ini tanpa boleh melakukan semua aksinya.
-  const { can } = usePermission();
-  /**
-   * Izin "stok minus" untuk SATU pemindaian berikutnya. Harus one-shot: begitu
-   * dipakai langsung dibuang, supaya tidak pernah ikut terpakai untuk barcode
-   * pesanan lain yang kebetulan dipindai setelahnya.
-   */
   const [negativeStockApproved, setNegativeStockApproved] = useState(false);
+
+  const { can } = usePermission();
   const scannerRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const cacheRef = useRef(new Map<string, { at: number; data: StationResponse }>());
+
+  const buildUrl = useCallback(
+    (opts: {
+      sort: 'oldest' | 'newest';
+      bucket: QueueBucket;
+      range: RangePreset;
+      page: number;
+      search: string;
+      kategori?: ExceptionKategori | null;
+    }) => {
+      const params = new URLSearchParams({
+        sort: opts.sort,
+        bucket: opts.bucket,
+        range: opts.range,
+        page: String(opts.page),
+      });
+      if (opts.search.trim()) params.set('search', opts.search.trim());
+      if (opts.kategori) params.set('kategori', opts.kategori);
+      return `/api/v1/fulfillment/station?${params.toString()}`;
+    },
+    [],
+  );
 
   const load = useCallback(
     async (
-      sortMode: 'oldest' | 'newest' = sort,
-      pageArg: number = page,
-      stageArg: 'SEMUA' | Stage = stageFilter,
+      opts: {
+        sort?: 'oldest' | 'newest';
+        bucket?: QueueBucket;
+        range?: RangePreset;
+        page?: number;
+        search?: string;
+        kategori?: ExceptionKategori | null;
+        /** true = abaikan cache (tombol "Muat Ulang" / setelah aksi). */
+        force?: boolean;
+      } = {},
     ) => {
+      const target = {
+        sort: opts.sort ?? sort,
+        bucket: opts.bucket ?? bucket,
+        range: opts.range ?? range,
+        page: opts.page ?? page,
+        search: opts.search ?? search,
+        kategori: opts.kategori !== undefined ? opts.kategori : kategori,
+      };
+      const url = buildUrl(target);
+
+      if (!opts.force) {
+        const hit = cacheRef.current.get(url);
+        if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
+          setData(hit.data);
+          setPage(hit.data.page);
+          setError('');
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Batalkan permintaan sebelumnya: jawaban lama tidak boleh menimpa yang baru.
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       try {
-        const params = new URLSearchParams({ sort: sortMode, page: String(pageArg) });
-        if (stageArg !== 'SEMUA') params.set('stage', stageArg);
-        const res = await api<StationResponse>(`/api/v1/fulfillment/station?${params.toString()}`);
+        const res = await api<StationResponse>(url, { signal: controller.signal });
+        cacheRef.current.set(url, { at: Date.now(), data: res });
         setData(res);
-        // Server bisa menjepit halaman yang diminta (misalnya halaman terakhir
-        // menjadi kosong setelah pesanan diselesaikan). Halaman yang benar-benar
-        // tampil diikuti supaya penanda halaman tidak berbohong.
         setPage(res.page);
         setError('');
+        if (target.page === 1) setPicked([]);
       } catch (e) {
+        if ((e as Error).name === 'AbortError') return;
         setError((e as Error).message);
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     },
-    [sort, page, stageFilter],
+    [buildUrl, bucket, kategori, page, range, search, sort],
   );
 
+  // Muat pertama + muat ulang saat filter berubah.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       await Promise.resolve();
       if (cancelled) return;
-      await load(sort, page, stageFilter);
+      await load();
     })();
-    const onRealtime = () => void load(sort, page, stageFilter);
-    window.addEventListener('shopee:synced', onRealtime);
-    window.addEventListener('fulfillment:updated', onRealtime);
-    const refresh = setInterval(() => void load(sort, page, stageFilter), 30000);
-    const clock = setInterval(() => setNow(new Date()), 60000);
     return () => {
       cancelled = true;
+    };
+  }, [load]);
+
+  // Realtime: sinkronisasi Shopee / aksi operator → buang cache lalu muat ulang.
+  useEffect(() => {
+    const onRealtime = () => {
+      cacheRef.current.clear();
+      void load({ force: true });
+    };
+    window.addEventListener('shopee:synced', onRealtime);
+    window.addEventListener('fulfillment:updated', onRealtime);
+    const refresh = setInterval(() => onRealtime(), 30_000);
+    const clock = setInterval(() => setNow(new Date()), 60_000);
+    return () => {
       window.removeEventListener('shopee:synced', onRealtime);
       window.removeEventListener('fulfillment:updated', onRealtime);
       clearInterval(refresh);
       clearInterval(clock);
     };
-  }, [load, sort, page, stageFilter]);
+  }, [load]);
+
+  // Debounce pencarian: satu permintaan setelah operator berhenti mengetik.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearch(searchInput);
+      setPage(1);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  const gantiRentang = (preset: RangePreset) => {
+    setRange(preset);
+    setPage(1);
+    setLoading(true);
+  };
+
+  const gantiBucket = (next: QueueBucket) => {
+    setBucket(next);
+    setPage(1);
+    setLoading(true);
+  };
 
   /**
-   * Ambil resi untuk semua pesanan yang dicentang sekaligus.
-   *
-   * Endpoint-nya partial success, jadi jawaban berisi mana yang berhasil dan
-   * mana yang gagal. Yang gagal ditampilkan apa adanya supaya operator tahu
-   * harus mencoba ulang pesanan mana — bukan diberi satu pesan "gagal" yang
-   * tidak menjelaskan apa pun.
+   * Saringan "perlu perhatian". Membalik bucket ke `semua` karena pembatalan
+   * dan pesanan selesai tidak masuk antrean kerja biasa — tanpa ini, kartu
+   * Pembatalan/Batal Sistem akan selalu kosong.
    */
-  async function bulkAmbilResi() {
-    if (picked.length === 0) return;
+  const gantiKategori = (next: ExceptionKategori) => {
+    const berikut = kategori === next ? null : next;
+    setKategori(berikut);
+    setBucket('semua');
+    setPage(1);
+    setLoading(true);
+  };
+
+  const changeSort = (next: 'oldest' | 'newest') => {
+    setSort(next);
+    setLoading(true);
+  };
+
+  const muatUlang = () => {
+    cacheRef.current.clear();
+    setLoading(true);
+    void load({ force: true });
+  };
+
+  /** Pesanan yang dicentang DAN masih boleh diproses (kelayakan dari server). */
+  const filtered = data?.orders ?? [];
+  const pickedOrders = filtered.filter((o) => picked.includes(o.orderId) && o.workflow.canSelectForBulk);
+  const pickedIds = pickedOrders.map((o) => o.orderId);
+  const jumlahSiapAmbilResi = pickedOrders.filter((o) => o.workflow.canArrangeShipment).length;
+  const jumlahSiapCetakLabel = pickedOrders.filter((o) => o.workflow.canPrintLabel).length;
+  const idBisaDipilih = filtered.filter((o) => o.workflow.canSelectForBulk).map((o) => o.orderId);
+  const semuaTerpilih = idBisaDipilih.length > 0 && idBisaDipilih.every((id) => picked.includes(id));
+  const sebagianTerpilih = !semuaTerpilih && idBisaDipilih.some((id) => picked.includes(id));
+
+  const togglePick = (orderId: string) =>
+    setPicked((prev) => (prev.includes(orderId) ? prev.filter((x) => x !== orderId) : [...prev, orderId]));
+
+  const toggleSemuaDiHalaman = () =>
+    setPicked((prev) =>
+      semuaTerpilih
+        ? prev.filter((id) => !idBisaDipilih.includes(id))
+        : [...new Set([...prev, ...idBisaDipilih])],
+    );
+
+  async function bulkAmbilResi(orderIds: string[]) {
+    if (orderIds.length === 0) return;
     setBulkBusy(true);
     setError('');
     setNotice(null);
@@ -333,19 +320,16 @@ export default function PesananPengirimanPage() {
         summary: { total: number; ok: number; gagal: number };
         results: { externalOrderId: string; status: string; message: string }[];
         message: string;
-      }>('/api/v1/orders/bulk-prepare-shipment', { method: 'POST', body: { orderIds: picked } });
+      }>('/api/v1/orders/bulk-prepare-shipment', { method: 'POST', body: { orderIds } });
 
       const gagal = res.results.filter((r) => r.status !== 'OK');
-      if (gagal.length === 0) {
-        setNotice({ tone: 'success', text: res.message });
-      } else {
+      if (gagal.length === 0) setNotice({ tone: 'success', text: res.message });
+      else
         setNotice({
           tone: 'warning',
           text: `${res.message} Gagal: ${gagal.map((g) => `${g.externalOrderId} (${g.message})`).join('; ')}`,
         });
-      }
-      await load();
-      setPicked([]);
+      muatUlang();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -353,21 +337,18 @@ export default function PesananPengirimanPage() {
     }
   }
 
-  /** Unduh label PDF gabungan untuk pesanan yang dicentang. */
-  async function bulkCetakLabel() {
-    if (picked.length === 0) return;
+  async function bulkCetakLabel(orderIds: string[]) {
+    if (orderIds.length === 0) return;
     setBulkBusy(true);
     setError('');
     try {
       const res = await fetch('/api/v1/orders/bulk-print-labels', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderIds: picked }),
+        body: JSON.stringify({ orderIds }),
         credentials: 'include',
       });
 
-      // Server melaporkan label yang gagal lewat header supaya operator tahu
-      // mana yang perlu diunduh satu per satu, tanpa membatalkan yang berhasil.
       const gagal = res.headers.get('X-Label-Gagal-Daftar');
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -392,62 +373,20 @@ export default function PesananPengirimanPage() {
     }
   }
 
-  const togglePick = (orderId: string) =>
-    setPicked((prev) => (prev.includes(orderId) ? prev.filter((x) => x !== orderId) : [...prev, orderId]));
-
-  // Penyaringan TAHAP dilakukan di server, bukan di sini.
-  //
-  // Kalau tahap disaring di browser sementara daftarnya sudah dipotong per
-  // halaman oleh server, tiap tab hanya akan menampilkan sebagian halaman -
-  // tab "Dibatalkan" bisa tampak kosong padahal pesanannya ada di halaman lain.
-  // Jadi yang tampil di sini persis apa yang dikirim server.
-  const filtered = data?.orders ?? [];
-  const totalPesanan = data?.total ?? 0;
-  const totalHalaman = data?.totalPages ?? 1;
-
-  /** Menandai bahwa operator sedang melihat hasil yang terpotong pagar pengaman. */
-  const terpotong = data?.truncated === true;
-
-  const idDiHalaman = filtered.map((o) => o.orderId);
-  const semuaTerpilih = idDiHalaman.length > 0 && idDiHalaman.every((id) => picked.includes(id));
-  const sebagianTerpilih = !semuaTerpilih && idDiHalaman.some((id) => picked.includes(id));
-
-  /**
-   * Centang/hapus-centang SEMUA pesanan di halaman yang sedang tampil.
-   *
-   * Sengaja hanya berlaku untuk halaman ini, bukan seluruh hasil: operator harus
-   * melihat sendiri apa yang akan diproses. Operasi massal dibatasi server
-   * (BATAS_MASSAL), jadi bila pilihannya melewati batas itu, operator diberi
-   * tahu LEBIH DULU - bukan gagal setelah menekan tombol.
-   */
-  const toggleSemuaDiHalaman = () =>
-    setPicked((prev) =>
-      semuaTerpilih
-        ? prev.filter((id) => !idDiHalaman.includes(id))
-        : [...new Set([...prev, ...idDiHalaman])],
-    );
-
-  const gantiTahap = (tahap: 'SEMUA' | Stage) => {
-    setStageFilter(tahap);
-    setPage(1); // halaman 1 untuk tahap baru: nomor halaman lama tidak berlaku lagi
-  };
-
-  // Cetak label RESMI Shopee: unduh file dari Shopee, lalu buka di tab baru.
- // Tidak pernah memakai label buatan — kalau Shopee menolak, tampilkan pesan errornya.
- async function handlePrintOfficialLabel(orderId: string, orderSn: string) {
-   setPrintingLabelId(orderId);
-   setNotice(null);
-   try {
-     await openOfficialLabel(orderId);
-   } catch (err) {
-     setNotice({
-       tone: 'danger',
-       text: `Label resmi pesanan ${orderSn} belum bisa dicetak: ${(err as Error).message}`,
-     });
-   } finally {
-     setPrintingLabelId(null);
-   }
- }
+  async function handlePrintOfficialLabel(orderId: string, orderSn: string) {
+    setPrintingLabelId(orderId);
+    setNotice(null);
+    try {
+      await openOfficialLabel(orderId);
+    } catch (err) {
+      setNotice({
+        tone: 'danger',
+        text: `Label resmi pesanan ${orderSn} belum bisa dicetak: ${(err as Error).message}`,
+      });
+    } finally {
+      setPrintingLabelId(null);
+    }
+  }
 
   async function run(key: string, fn: () => Promise<unknown>, successMsg?: string) {
     setBusyKey(key);
@@ -455,7 +394,8 @@ export default function PesananPengirimanPage() {
     try {
       const result = await fn();
       if (successMsg) setNotice({ tone: 'success', text: successMsg });
-      await load(sort);
+      cacheRef.current.clear();
+      await load({ force: true });
       return result;
     } catch (e) {
       setNotice({ tone: 'danger', text: (e as Error).message });
@@ -465,28 +405,51 @@ export default function PesananPengirimanPage() {
     }
   }
 
+  /**
+   * Menutup catatan fulfillment untuk paket yang sudah dikirim (dijemput kurir /
+   * transit / diterima). Tanpa ini, scan resi paket tersebut berhenti di
+   * pemeriksaan stok dan menampilkan "harus tambah stok".
+   */
+  async function tutupPaketSudahDikirim() {
+    setReconciling(true);
+    setNotice(null);
+    try {
+      const res = await api<{
+        ditutup: number;
+        unitStokDipotong: number;
+        varianStokMinus: number;
+        messages: string[];
+      }>('/api/v1/fulfillment/reconcile-shipped', { method: 'POST', body: { apply: true } });
+      cacheRef.current.clear();
+      await load({ force: true });
+      setNotice({
+        tone: res.ditutup > 0 ? 'success' : 'info',
+        text: res.messages[0] ?? 'Tidak ada paket yang perlu ditutup.',
+      });
+    } catch (e) {
+      setNotice({ tone: 'danger', text: (e as Error).message });
+    } finally {
+      setReconciling(false);
+    }
+  }
+
   const scanResi = useCallback(
     async (code: string) => {
       setBusyKey('scan');
       setNotice(null);
       try {
-        // Izin stok minus hanya berlaku untuk SATU pemindaian berikutnya (one-shot):
-        // langsung dibuang setelah dipakai supaya tidak pernah "bocor" ke barcode
-        // pesanan lain yang dipindai berikutnya.
+        // Izin stok minus hanya untuk SATU pemindaian berikutnya (one-shot).
         const allowNegativeStock = negativeStockApproved;
         if (negativeStockApproved) setNegativeStockApproved(false);
 
         const res = await api<ScanOutcome>('/api/v1/fulfillment/scan-awb', {
           method: 'POST',
-          body: {
-            scannedCode: code,
-            confirmPicking: true,
-            allowNegativeStock,
-          },
+          body: { scannedCode: code, confirmPicking: true, allowNegativeStock },
         });
         setOutcome(res);
         playScanFeedback(res.stockDeducted || res.code !== 'NOT_FOUND');
-        await load(sort);
+        cacheRef.current.clear();
+        await load({ force: true });
       } catch (e) {
         setOutcome(null);
         setNotice({ tone: 'danger', text: (e as Error).message });
@@ -495,7 +458,7 @@ export default function PesananPengirimanPage() {
         setBusyKey(null);
       }
     },
-    [load, negativeStockApproved, sort],
+    [load, negativeStockApproved],
   );
 
   async function ambilResi(orderId: string) {
@@ -531,7 +494,6 @@ export default function PesananPengirimanPage() {
   }
 
   function focusScannerForOrder(order: StationOrder) {
-    setStageFilter('SEMUA');
     setScannerFocusRequest((value) => value + 1);
     setNotice({
       tone: 'info',
@@ -540,41 +502,153 @@ export default function PesananPengirimanPage() {
     scannerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
-  function changeSort(next: 'oldest' | 'newest') {
-    setSort(next);
-    setLoading(true);
-    void load(next);
-  }
+  if (loading && !data) return <LoadingState message="Memuat daftar pesanan..." />;
+  if (error && !data) return <ErrorState message={error} onRetry={muatUlang} />;
 
-  if (loading) return <LoadingState message="Memuat daftar pesanan..." />;
-  if (error) return <ErrorState message={error} onRetry={() => { setLoading(true); void load(sort); }} />;
+  const kartu = data?.kartu;
+  const kartuList: Array<{
+    key: QueueBucket;
+    label: string;
+    hint: string;
+    nilai: number;
+    tone: string;
+    icon: typeof ClipboardList;
+  }> = [
+    {
+      key: 'baru',
+      label: 'Pesanan Baru',
+      hint: 'Belum diproses / belum ada nomor resi',
+      nilai: kartu?.pesananBaru ?? 0,
+      tone: 'var(--warning)',
+      icon: ClipboardList,
+    },
+    {
+      key: 'sudahResi',
+      label: 'Sudah Ada Resi',
+      hint: 'Nomor resi sudah terbit, belum diserahkan',
+      nilai: kartu?.sudahResi ?? 0,
+      tone: 'var(--secondary)',
+      icon: PackageCheck,
+    },
+    {
+      key: 'perluDiproses',
+      label: 'Perlu Diproses',
+      hint: 'Semua pesanan yang masih harus dikerjakan',
+      nilai: kartu?.perluDiproses ?? 0,
+      tone: 'var(--primary)',
+      icon: Boxes,
+    },
+  ];
 
-  const stages = data?.stages;
-  const filters: Array<{ key: 'SEMUA' | Stage; label: string; count: number }> = [
-    { key: 'SEMUA', label: 'Semua', count: data?.orders.length ?? 0 },
-    { key: 'BARU', label: 'Perlu Diproses', count: stages?.baru ?? 0 },
-    { key: 'MENUNGGU_STOK', label: 'Menunggu Stok', count: stages?.menungguStok ?? 0 },
-    { key: 'SIAP_DIKEMAS', label: 'Siap Dikemas', count: stages?.siapDikemas ?? 0 },
-    { key: 'SIAP_KIRIM', label: 'Siap Kirim', count: stages?.siapKirim ?? 0 },
-    { key: 'DIBATALKAN', label: 'Dibatalkan', count: stages?.dibatalkan ?? 0 },
+  const perhatianList: Array<{
+    key: ExceptionKategori;
+    label: string;
+    hint: string;
+    nilai: number;
+    tone: string;
+    icon: typeof AlertTriangle;
+  }> = [
+    {
+      key: 'pembatalan',
+      label: 'Pembatalan Diajukan',
+      hint: 'Pembeli minta batal — perlu ditanggapi',
+      nilai: data?.perhatian.pembatalanDiajukan ?? 0,
+      tone: 'var(--warning)',
+      icon: AlertTriangle,
+    },
+    {
+      key: 'batalSistem',
+      label: 'Batal oleh Sistem',
+      hint: 'Dibatalkan otomatis Shopee (mis. terlambat kirim)',
+      nilai: data?.perhatian.batalSistem ?? 0,
+      tone: 'var(--danger)',
+      icon: Ban,
+    },
+    {
+      key: 'terlambat',
+      label: 'Terlambat',
+      hint: 'Tenggat kirim sudah lewat',
+      nilai: data?.perhatian.terlambat ?? 0,
+      tone: 'var(--danger)',
+      icon: Clock,
+    },
+    {
+      key: 'besokBatal',
+      label: 'Besok Batal',
+      hint: 'Belum ada resi, tenggat ≤ 24 jam',
+      nilai: data?.perhatian.besokBatal ?? 0,
+      tone: 'var(--warning)',
+      icon: Clock,
+    },
+    {
+      key: 'beresiko',
+      label: 'Beresiko Terlambat',
+      hint: 'Resi sudah ada, menunggu penjemputan',
+      nilai: data?.perhatian.beresiko ?? 0,
+      tone: 'var(--secondary)',
+      icon: Clock,
+    },
   ];
 
   return (
     <div style={{ paddingBottom: 60 }}>
       <PageHeader
         title="Pesanan & Pengiriman"
-        subtitle="Pesanan masuk sampai diserahkan ke kurir — semua dikerjakan di halaman ini"
+        subtitle="Pesanan masuk sampai diserahkan ke kurir — semuanya di halaman ini"
         actions={
-          <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setLoading(true); void load(sort); }}>
-            <RefreshCw size={14} aria-hidden />
-            <span>Muat Ulang</span>
-          </button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                setStockVariantId(null);
+                setStockOpen(true);
+              }}
+              title="Tambah atau kurangi stok gudang"
+            >
+              <Boxes size={14} aria-hidden />
+              <span>Stok Gudang</span>
+            </button>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={muatUlang} title="Muat ulang data dari server">
+              <RefreshCw size={14} aria-hidden />
+              <span>Muat Ulang</span>
+            </button>
+          </div>
         }
       />
 
       {notice && (
         <div className="mb16">
           <Alert tone={notice.tone}>{notice.text}</Alert>
+        </div>
+      )}
+
+      {error && data && (
+        <div className="mb16">
+          <Alert tone="danger">{error}</Alert>
+        </div>
+      )}
+
+      {(data?.anomali?.paketJalanBelumDitutup ?? 0) > 0 && (
+        <div className="mb16">
+          <Alert tone="warning">
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', justifyContent: 'space-between' }}>
+              <span>
+                <strong>{data!.anomali.paketJalanBelumDitutup} paket sudah dikirim</strong> (dijemput kurir / dalam
+                perjalanan) tetapi catatan gudangnya masih dianggap belum selesai. Selama belum ditutup, scan resi paket
+                itu berhenti di pemeriksaan stok.
+              </span>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={reconciling}
+                onClick={() => void tutupPaketSudahDikirim()}
+              >
+                <PackageCheck size={13} aria-hidden />
+                <span>{reconciling ? 'Menutup…' : 'Tutup otomatis'}</span>
+              </button>
+            </div>
+          </Alert>
         </div>
       )}
 
@@ -586,37 +660,20 @@ export default function PesananPengirimanPage() {
         </div>
       )}
 
-      <StepGuide />
-
-      {/* Ringkasan tahapan */}
-      <div className="stat-grid mb20">
-        {[
-          { label: 'Perlu Diproses', value: stages?.baru ?? 0, tone: STAGE_TONE.BARU },
-          { label: 'Menunggu Stok', value: stages?.menungguStok ?? 0, tone: STAGE_TONE.MENUNGGU_STOK },
-          { label: 'Siap Dikemas', value: stages?.siapDikemas ?? 0, tone: STAGE_TONE.SIAP_DIKEMAS },
-          { label: 'Siap Kirim', value: stages?.siapKirim ?? 0, tone: STAGE_TONE.SIAP_KIRIM },
-          { label: 'Sudah Dikirim', value: stages?.dikirim ?? 0, tone: STAGE_TONE.DIKIRIM },
-          { label: 'Dibatalkan', value: stages?.dibatalkan ?? 0, tone: STAGE_TONE.DIBATALKAN },
-        ].map((c) => (
-          <div className="card" key={c.label}>
-            <div className="small muted">{c.label}</div>
-            <div style={{ fontSize: 26, fontWeight: 800, color: c.tone }}>{c.value}</div>
-          </div>
-        ))}
-      </div>
-
+      {/* Pemindai resi: satu-satunya jalan menyelesaikan pesanan. */}
       <div className="card mb20" ref={scannerRef}>
         <h2 style={{ fontSize: 16, fontWeight: 800, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
           <ScanLine size={18} aria-hidden />
           <span>Scan Resi</span>
         </h2>
         <p className="small muted" style={{ marginTop: 0, marginBottom: 12 }}>
-          Scan hanya dipakai saat pesanan sudah berstatus <strong>Siap Dikemas</strong>. Pastikan nomor resi sudah muncul
-          dan stok gudang cukup. Setelah discan, stok berkurang dan pesanan otomatis berpindah ke <strong>Siap Kirim</strong>;
-          setelah itu baru tekan <strong>Serahkan ke Kurir</strong>.
+          Scan hanya dipakai saat pesanan sudah berstatus <strong>Siap Dikemas</strong>. Setelah discan, stok berkurang
+          dan pesanan otomatis berpindah ke <strong>Siap Kirim</strong>; setelah itu baru tekan{' '}
+          <strong>Serahkan ke Kurir</strong>.
         </p>
 
         <BarcodeScanner
+          autoFocus={false}
           label=""
           submitLabel="Selesaikan"
           placeholder="Scan barcode resi (bukan nomor pesanan)"
@@ -631,40 +688,21 @@ export default function PesananPengirimanPage() {
           <div
             style={{
               marginTop: 14,
-              border: `1px solid ${
-                outcome.code === 'PACKED' || outcome.code === 'ALREADY_PACKED' || outcome.code === 'ALREADY_HANDED_OVER'
-                  ? 'var(--success, #10b981)'
-                  : outcome.code === 'NOT_FOUND'
-                    ? 'var(--danger, #ef4444)'
-                    : 'var(--warning, #f59e0b)'
-              }`,
+              border: `1px solid ${WARNA_NADA[NADA_HASIL[outcome.code]]}`,
               borderRadius: 12,
               padding: 16,
-              background: 'var(--surface-container, #fff)',
+              background: 'var(--surface-container)',
             }}
           >
             <div style={{ display: 'flex', gap: 10 }}>
-              {outcome.code === 'PACKED' || outcome.code === 'ALREADY_PACKED' || outcome.code === 'ALREADY_HANDED_OVER' ? (
-                <CheckCircle2 size={20} aria-hidden style={{ color: 'var(--success, #10b981)', flexShrink: 0 }} />
-              ) : outcome.code === 'NOT_FOUND' || outcome.code === 'EXCEPTION' ? (
-                <XCircle size={20} aria-hidden style={{ color: 'var(--danger, #ef4444)', flexShrink: 0 }} />
-              ) : (
-                <AlertTriangle size={20} aria-hidden style={{ color: 'var(--warning, #f59e0b)', flexShrink: 0 }} />
-              )}
+              {(() => {
+                const nada = NADA_HASIL[outcome.code];
+                const warna = WARNA_NADA[nada];
+                const Ikon = nada === 'success' ? CheckCircle2 : nada === 'danger' ? XCircle : nada === 'info' ? Info : AlertTriangle;
+                return <Ikon size={20} aria-hidden style={{ color: warna, flexShrink: 0 }} />;
+              })()}
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, fontSize: 14 }}>
-                  {outcome.code === 'PACKED'
-                    ? 'Pesanan selesai diproses — stok gudang sudah berkurang'
-                    : outcome.code === 'NEEDS_SHIPMENT'
-                      ? 'Resi belum ada — atur pengiriman dulu'
-                    : outcome.code === 'ALREADY_PACKED'
-                      ? 'Pesanan ini sudah pernah diselesaikan'
-                      : outcome.code === 'ALREADY_HANDED_OVER'
-                        ? 'Pesanan sudah diserahkan ke kurir'
-                        : outcome.code === 'NOT_FOUND'
-                          ? 'Resi / nomor pesanan tidak dikenali'
-                          : 'Belum bisa diselesaikan'}
-                </div>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{JUDUL_HASIL[outcome.code]}</div>
                 <p style={{ margin: '4px 0 0', fontSize: 13, lineHeight: 1.5 }}>{outcome.message}</p>
 
                 {outcome.shortfalls.length > 0 && (
@@ -689,9 +727,7 @@ export default function PesananPengirimanPage() {
                           onClick={() => void handlePrintOfficialLabel(outcome.order!.id, outcome.order!.externalOrderId)}
                         >
                           <Printer size={13} aria-hidden />
-                          <span>
-                            {printingLabelId === outcome.order.id ? 'Menyiapkan label…' : 'Cetak Label Resi'}
-                          </span>
+                          <span>{printingLabelId === outcome.order.id ? 'Menyiapkan label…' : 'Cetak Label Resi'}</span>
                         </button>
                       ) : (
                         <span className="small muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -752,7 +788,112 @@ export default function PesananPengirimanPage() {
         )}
       </div>
 
-      {/* Stok gudang */}
+      {/* Rentang tanggal + tiga kartu kerja. */}
+      <div className="card mb16" style={{ padding: '12px 14px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+          <span className="small muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700 }}>
+            <CalendarDays size={14} aria-hidden /> Tanggal pesanan
+          </span>
+          <div className="filter-chips filter-chips-wrap">
+            {RANGE_PRESETS.map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                className={`btn btn-sm ${range === preset ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => gantiRentang(preset)}
+              >
+                {RANGE_LABEL[preset]}
+              </button>
+            ))}
+          </div>
+          {loading && data ? <span className="small muted">memperbarui…</span> : null}
+        </div>
+
+        <div className="queue-cards">
+          {kartuList.map((k) => {
+            const Icon = k.icon;
+            const aktif = bucket === k.key;
+            return (
+              <button
+                key={k.key}
+                type="button"
+                className={`queue-card ${aktif ? 'is-active' : ''}`}
+                style={{ borderLeftColor: k.tone }}
+                onClick={() => gantiBucket(k.key)}
+                aria-pressed={aktif}
+                title={`Tampilkan: ${k.label}`}
+              >
+                <span className="queue-card-head">
+                  <Icon size={14} aria-hidden style={{ color: k.tone }} />
+                  <span>{k.label}</span>
+                </span>
+                <span className="queue-card-value" style={{ color: k.tone }}>
+                  {rupiahNol(k.nilai)}
+                </span>
+                <span className="queue-card-hint">{k.hint}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* ── Perlu perhatian: pembatalan & keterlambatan ────────────────── */}
+        <div className="queue-cards" style={{ marginTop: 10 }}>
+          {perhatianList.map((k) => {
+            const Icon = k.icon;
+            const aktif = kategori === k.key;
+            return (
+              <button
+                key={k.key}
+                type="button"
+                className={`queue-card ${aktif ? 'is-active' : ''}`}
+                style={{ borderLeftColor: k.tone }}
+                onClick={() => gantiKategori(k.key)}
+                aria-pressed={aktif}
+                title={`Tampilkan: ${k.label}`}
+              >
+                <span className="queue-card-head">
+                  <Icon size={14} aria-hidden style={{ color: k.tone }} />
+                  <span>{k.label}</span>
+                </span>
+                <span className="queue-card-value" style={{ color: k.tone }}>
+                  {rupiahNol(k.nilai)}
+                </span>
+                <span className="queue-card-hint">{k.hint}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {kategori && (
+          <div
+            style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}
+            className="small"
+          >
+            <span className="muted">
+              Menampilkan: <strong>{perhatianList.find((k) => k.key === kategori)?.label}</strong>
+              {kategori === 'pembatalan' || kategori === 'batalSistem'
+                ? ' — mengikuti rentang tanggal di atas'
+                : ' — dihitung dari tenggat kirim'}
+            </span>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => gantiKategori(kategori)}>
+              Hapus saringan
+            </button>
+          </div>
+        )}
+
+        {bucket !== 'semua' && (
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            style={{ marginTop: 8 }}
+            onClick={() => gantiBucket('semua')}
+            title="Tampilkan semua pesanan, termasuk yang dibatalkan dan sudah selesai"
+          >
+            Lihat semua pesanan (termasuk batal & selesai)
+          </button>
+        )}
+      </div>
+
       <StockPanel
         open={stockOpen}
         onClose={() => {
@@ -763,27 +904,10 @@ export default function PesananPengirimanPage() {
         prefillVariantId={stockVariantId}
         onDone={(message) => {
           setNotice({ tone: 'success', text: message });
-          void load(sort);
+          muatUlang();
         }}
       />
 
-      {!stockOpen && (
-        <div className="mb20">
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => {
-              setStockVariantId(null);
-              setStockOpen(true);
-            }}
-          >
-            <Boxes size={15} aria-hidden />
-            <span>Buka Stok Gudang</span>
-          </button>
-        </div>
-      )}
-
-      {/* Daftar pesanan */}
       <div
         style={{
           display: 'flex',
@@ -795,12 +919,12 @@ export default function PesananPengirimanPage() {
         }}
       >
         <h2 style={{ fontSize: 16, fontWeight: 800, margin: 0 }}>
-          Daftar Pesanan ({totalPesanan})
+          Daftar Pesanan ({rupiahNol(data?.total ?? 0)})
         </h2>
-        {idDiHalaman.length > 0 && (
+        {idBisaDipilih.length > 0 && (
           <label
             style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13 }}
-            title="Centang semua pesanan di halaman ini"
+            title="Centang semua pesanan yang masih perlu diproses di halaman ini"
           >
             <input
               type="checkbox"
@@ -811,7 +935,7 @@ export default function PesananPengirimanPage() {
               onChange={toggleSemuaDiHalaman}
               style={{ width: 16, height: 16 }}
             />
-            <span>Pilih semua di halaman ini</span>
+            <span>Pilih semua ({idBisaDipilih.length})</span>
           </label>
         )}
         <div className="filter-chips">
@@ -836,58 +960,49 @@ export default function PesananPengirimanPage() {
         </div>
       </div>
 
-      <div className="filter-chips mb16">
-        {filters.map((f) => (
-          <button
-            key={f.key}
-            type="button"
-            className={`btn btn-sm ${stageFilter === f.key ? 'btn-primary' : 'btn-secondary'}`}
-            onClick={() => gantiTahap(f.key)}
-          >
-            <span>
-              {f.label} ({f.count})
-            </span>
-          </button>
-        ))}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+        <input
+          type="search"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          placeholder="Cari nomor pesanan, nomor resi, nama pembeli, atau SKU"
+          aria-label="Cari pesanan"
+          style={{
+            flex: '1 1 320px',
+            minWidth: 0,
+            padding: '9px 12px',
+            borderRadius: 8,
+            border: '1px solid var(--border)',
+            background: 'var(--surface)',
+            color: 'inherit',
+            fontSize: 14,
+          }}
+        />
       </div>
 
-      {terpotong && (
-        <div
-          className="card mb16"
-          style={{ borderLeft: '4px solid #f59e0b', background: '#fffbeb', padding: '10px 14px' }}
-        >
-          <strong>Daftar ini dipotong.</strong> Terlalu banyak pesanan untuk ditampilkan sekaligus,
-          jadi hanya sebagian yang dihitung. Selesaikan atau batalkan pesanan lama, lalu muat ulang
-          halaman ini — jangan menganggap semua pesanan sudah tampil.
+      {data?.truncated && (
+        <div className="card mb16" style={{ borderLeft: '4px solid var(--warning)', background: 'var(--tertiary-container)', padding: '10px 14px' }}>
+          <strong>Daftar ini dipotong.</strong> Terlalu banyak pesanan untuk ditampilkan sekaligus, jadi hanya sebagian
+          yang dihitung. Selesaikan atau batalkan pesanan lama, lalu muat ulang halaman ini.
         </div>
       )}
 
       {filtered.length === 0 ? (
         <div className="card">
-          <EmptyState title="Tidak ada pesanan di tahap ini" description="Pilih filter lain, atau tunggu pesanan baru masuk dari Shopee." />
+          <EmptyState
+            title="Tidak ada pesanan pada pilihan ini"
+            description="Coba ganti rentang tanggal atau kartu yang dipilih, atau tunggu pesanan baru masuk dari Shopee."
+          />
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {picked.length > 0 && (
-            <div
-              className="card"
-              style={{
-                position: 'sticky',
-                top: 8,
-                zIndex: 5,
-                borderLeft: '3px solid var(--color-primary, #2563eb)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-                flexWrap: 'wrap',
-              }}
-            >
+          {pickedOrders.length > 0 && (
+            <div className="card bulk-bar">
               <strong>
-                {picked.length} pesanan dipilih
-                {picked.length > BATAS_MASSAL ? (
+                {pickedOrders.length} pesanan dipilih
+                {pickedOrders.length > BATAS_MASSAL ? (
                   <span style={{ display: 'block', fontWeight: 400, marginTop: 2 }}>
-                    Maksimal {BATAS_MASSAL} pesanan sekali proses. Kurangi pilihan menjadi{' '}
-                    {BATAS_MASSAL} atau kurang.
+                    Maksimal {BATAS_MASSAL} pesanan sekali proses. Kurangi pilihan menjadi {BATAS_MASSAL} atau kurang.
                   </span>
                 ) : null}
               </strong>
@@ -895,24 +1010,28 @@ export default function PesananPengirimanPage() {
                 <button
                   type="button"
                   className="btn btn-primary btn-sm"
-                  onClick={() => void bulkAmbilResi()}
-                  disabled={bulkBusy}
-                  title="Minta nomor resi ke Shopee untuk semua pesanan yang dicentang, satu per satu di server"
+                  onClick={() => void bulkAmbilResi(pickedIds)}
+                  disabled={bulkBusy || jumlahSiapAmbilResi === 0 || pickedOrders.length > BATAS_MASSAL}
+                  title={
+                    jumlahSiapAmbilResi === 0
+                      ? 'Semua pesanan pilihan sudah punya resi atau sudah final.'
+                      : 'Minta nomor resi ke Shopee untuk semua pesanan yang dicentang'
+                  }
                 >
                   <Truck size={13} aria-hidden />
-                  <span>{bulkBusy ? 'Memproses...' : 'Ambil Resi Semua'}</span>
+                  <span>{bulkBusy ? 'Memproses...' : `Ambil Resi Semua (${jumlahSiapAmbilResi})`}</span>
                 </button>
               ) : null}
               {can('order.pack') ? (
                 <button
                   type="button"
                   className="btn btn-secondary btn-sm"
-                  onClick={() => void bulkCetakLabel()}
-                  disabled={bulkBusy}
+                  onClick={() => void bulkCetakLabel(pickedIds)}
+                  disabled={bulkBusy || jumlahSiapCetakLabel === 0}
                   title="Unduh label resmi Shopee untuk semua pesanan yang dicentang dalam satu PDF"
                 >
                   <Printer size={13} aria-hidden />
-                  <span>Cetak Label Semua</span>
+                  <span>Cetak Label Semua ({jumlahSiapCetakLabel})</span>
                 </button>
               ) : null}
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPicked([])} disabled={bulkBusy}>
@@ -920,189 +1039,45 @@ export default function PesananPengirimanPage() {
               </button>
             </div>
           )}
-          {filtered.map((o) => {
-            const hoursLeft = o.shipByAt && now ? Math.round((new Date(o.shipByAt).getTime() - now.getTime()) / 3600000) : null;
-            const urgent = hoursLeft !== null && hoursLeft <= 24;
-            const workflow = deriveOperatorWorkflow({
-              stage: o.stage,
-              hasAwb: Boolean(o.awb?.trim()),
-              hasShortfall: o.shortfallUnits > 0,
-            });
-            return (
-              <div className="card" key={o.orderId} style={{ borderLeft: `3px solid ${STAGE_TONE[o.stage]}` }}>
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'flex-start',
-                    gap: 12,
-                    flexWrap: 'wrap',
-                    marginBottom: 10,
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                    <label
-                      title="Centang untuk diproses sekaligus"
-                      style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', paddingTop: 2 }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={picked.includes(o.orderId)}
-                        onChange={() => togglePick(o.orderId)}
-                        aria-label={`Pilih pesanan ${o.externalOrderId}`}
-                      />
-                    </label>
-                    <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <span className="mono" style={{ fontWeight: 700 }}>{o.externalOrderId}</span>
-                      <span className="badge badge-neutral">{STAGE_LABEL[o.stage]}</span>
-                      {o.awb ? (
-                        <span className="badge badge-neutral mono" style={{ fontSize: 11 }}>{o.awb}</span>
-                      ) : (
-                        <span className="badge badge-neutral" style={{ fontSize: 11 }}>Resi belum ada</span>
-                      )}
-                      {urgent && hoursLeft !== null && (
-                        <span className="badge badge-danger" style={{ fontSize: 11 }}>
-                          {hoursLeft < 0 ? `Lewat ${Math.abs(hoursLeft)} jam` : `Sisa ${hoursLeft} jam`}
-                        </span>
-                      )}
-                    </div>
-                    <div className="small muted" style={{ marginTop: 4 }}>
-                      {o.buyerName ?? 'Pembeli Shopee'} · {o.shopName} · masuk{' '}
-                      {formatDate(o.placedAt)} · batas kirim {formatDate(o.shipByAt)} · {o.totalUnits} barang
-                    </div>
-                    </div>
-                  </div>
 
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    {workflow.nextAction === 'ARRANGE_SHIPMENT' && (
-                      <button
-                        type="button"
-                        className="btn btn-primary btn-sm"
-                        disabled={busyKey === `resi-${o.orderId}`}
-                        title="Minta nomor resi ke Shopee supaya paket bisa lanjut ke tahap pemrosesan"
-                        onClick={() => void ambilResi(o.orderId)}
-                      >
-                        <Truck size={13} aria-hidden />
-                        <span>{busyKey === `resi-${o.orderId}` ? 'Memproses...' : 'Atur Pengiriman (Ambil Resi)'}</span>
-                      </button>
-                    )}
-
-                    {workflow.nextAction === 'PROCESS_ORDER' && (
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        disabled={busyKey === `siap-${o.orderId}`}
-                        onClick={() => void siapkanTanpaResi(o)}
-                      >
-                        <ClipboardList size={13} aria-hidden />
-                        <span>{busyKey === `siap-${o.orderId}` ? 'Memproses...' : 'Mulai Proses Pesanan'}</span>
-                      </button>
-                    )}
-
-                    {workflow.nextAction === 'ADD_STOCK' && (
-                      <button
-                        type="button"
-                        className="btn btn-primary btn-sm"
-                        onClick={() => {
-                          setStockVariantId(o.items.find((i) => i.shortfall > 0)?.variantId ?? null);
-                          setStockOpen(true);
-                        }}
-                      >
-                        <Boxes size={13} aria-hidden />
-                        <span>Isi Stok dulu</span>
-                      </button>
-                    )}
-
-                    {workflow.nextAction === 'SCAN_AWB' && o.awb && (
-                      <button
-                        type="button"
-                        className="btn btn-primary btn-sm"
-                        disabled={busyKey === `kemas-${o.orderId}`}
-                        title="Kembalikan fokus ke pemindai; operator tetap harus memindai barcode resi"
-                        onClick={() => focusScannerForOrder(o)}
-                      >
-                        <ScanLine size={13} aria-hidden />
-                        <span>{busyKey === `kemas-${o.orderId}` ? 'Memproses...' : 'Scan Resi untuk Selesai'}</span>
-                      </button>
-                    )}
-
-                    {workflow.nextAction === 'HANDOVER' && o.fulfillmentId && (
-                      <button
-                        type="button"
-                        className="btn btn-primary btn-sm"
-                        disabled={busyKey === `serah-${o.orderId}`}
-                        onClick={() =>
-                          void run(
-                            `serah-${o.orderId}`,
-                            () =>
-                              api(`/api/v1/fulfillment/orders/${o.fulfillmentId}/handover`, {
-                                method: 'POST',
-                                body: o.awb ? { awb: o.awb, carrier: o.carrier ?? undefined } : {},
-                              }),
-                            'Paket sudah diserahkan ke kurir.',
-                          )
-                        }
-                      >
-                        <Handshake size={13} aria-hidden />
-                        <span>{busyKey === `serah-${o.orderId}` ? 'Memproses...' : 'Serahkan ke Kurir'}</span>
-                      </button>
-                    )}
-
-                    {(o.stage === 'SIAP_DIKEMAS' || o.stage === 'SIAP_KIRIM' || o.stage === 'DIKIRIM') && o.awb && (
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        disabled={printingLabelId === o.orderId}
-                        onClick={() => void handlePrintOfficialLabel(o.orderId, o.externalOrderId)}
-                      >
-                        <Printer size={13} aria-hidden />
-                        <span>{printingLabelId === o.orderId ? 'Menyiapkan label…' : 'Cetak Label Resi'}</span>
-                      </button>
-                    )}
-
-                    <Link className="btn btn-ghost btn-sm" href={`/dashboard/pesanan/${o.orderId}`}>
-                      <Info size={13} aria-hidden />
-                      <span>Detail</span>
-                    </Link>
-                  </div>
-                </div>
-
-                {!o.awb && (
-                  <div style={{ marginBottom: 10 }}>
-                    <Alert tone="info">
-                      Nomor resi belum ada. Klik <strong>Atur Pengiriman (Ambil Resi)</strong> supaya Shopee
-                      menerbitkan nomor resi, baru paket bisa dinyatakan siap kirim.
-                    </Alert>
-                  </div>
-                )}
-
-                {o.shortfallUnits > 0 && (
-                  <div style={{ marginBottom: 10 }}>
-                    <Alert tone="warning">
-                      Stok gudang kurang {o.shortfallUnits} barang untuk pesanan ini. Tambah stok dulu, atau pilih
-                      &quot;Tetap kirim (stok jadi minus)&quot;.
-                    </Alert>
-                  </div>
-                )}
-
-                <ItemTable
-                  items={o.items}
-                  onAddStock={(item) => {
-                    setStockVariantId(item.variantId);
-                    setStockOpen(true);
-                  }}
-                />
-              </div>
-            );
-          })}
+          {filtered.map((o) => (
+            <OrderCard
+              key={o.orderId}
+              order={o}
+              now={now}
+              picked={picked.includes(o.orderId)}
+              busyKey={busyKey}
+              printingLabelId={printingLabelId}
+              selectable={o.workflow.canSelectForBulk}
+              onTogglePick={() => togglePick(o.orderId)}
+              onAmbilResi={() => void ambilResi(o.orderId)}
+              onProses={() => void siapkanTanpaResi(o)}
+              onHandover={() =>
+                void run(
+                  `serah-${o.orderId}`,
+                  () =>
+                    api(`/api/v1/fulfillment/orders/${o.fulfillmentId}/handover`, {
+                      method: 'POST',
+                      body: o.awb ? { awb: o.awb, carrier: o.carrier ?? undefined } : {},
+                    }),
+                  'Paket sudah diserahkan ke kurir.',
+                )
+              }
+              onFocusScanner={() => focusScannerForOrder(o)}
+              onPrintLabel={() => void handlePrintOfficialLabel(o.orderId, o.externalOrderId)}
+              onAddStock={(variantId) => {
+                setStockVariantId(variantId);
+                setStockOpen(true);
+              }}
+            />
+          ))}
 
           <Pagination
             info={{
-              total: totalPesanan,
+              total: data?.total ?? 0,
               page: data?.page ?? 1,
               pageSize: data?.pageSize ?? 20,
-              totalPages: totalHalaman,
+              totalPages: data?.totalPages ?? 1,
             }}
             onChange={setPage}
             label="pesanan"

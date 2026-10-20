@@ -11,6 +11,10 @@
   --primary-hover: #d73a1a;
   --primary-active: #bd2a0d;
   --primary-strong: #c92c0d;
+  /* Khusus latar tombol terisi: #ee4d2d hanya mencapai 3,66:1 dengan teks putih,
+     di bawah ambang WCAG AA (4,5:1). Nilai ini mencapai 4,66:1 tanpa mengubah
+     warna brand untuk badge/ikon. */
+  --primary-solid: #d63a17;
   --on-primary: #ffffff;
   --primary-container: #fff4f1;
   --on-primary-container: #b82b0f;
@@ -50,7 +54,9 @@
   --surface-high: #e2e8f0;
   --surface-card: #ffffff;
   --on-surface: #0f172a;
-  --on-surface-variant: #64748b;
+  /* #64748b hanya 4,34:1 di atas --surface-low (badge netral 12px) — sedikit
+     digelapkan supaya lolos AA di semua permukaan terang. */
+  --on-surface-variant: #5a6b82;
   --on-surface-muted: #94a3b8;
 
   /* Lines & Borders */
@@ -259,7 +265,7 @@ a:hover {
   justify-content: space-between;
   gap: 16px;
   padding: 12px 20px;
-  color: #ffffff;
+  color: var(--surface);
   background: var(--on-surface, #0f172a);
   box-shadow: var(--e-sm, 0 4px 10px rgba(15, 23, 42, 0.18));
 }
@@ -330,7 +336,10 @@ a:hover {
 /* Sidebar Component */
 .sidebar {
   width: var(--sidebar-width);
+  /* `100dvh` = tinggi yang benar-benar terlihat (bilah alamat Chrome ikut
+     diperhitungkan). `100vh` dibiarkan sebagai cadangan peramban lama. */
   height: 100vh;
+  height: 100dvh;
   position: fixed;
   left: 0;
   top: 0;
@@ -369,7 +378,7 @@ a:hover {
   align-items: center;
   justify-content: center;
   background: var(--primary);
-  color: #fff;
+  color: var(--on-primary);
   border-radius: var(--r-md);
   box-shadow: 0 2px 6px rgba(238, 77, 45, 0.3);
 }
@@ -472,7 +481,7 @@ a:hover {
 /* Topbar Header */
 .topbar {
   height: var(--header-height);
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--topbar-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--divider);
@@ -498,6 +507,14 @@ a:hover {
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
+}
+
+/* Badge peran di topbar (kosmetik). Ditulis sebagai kelas, bukan inline style,
+   supaya aturan `display: none` di media query ponsel bisa berlaku. */
+.role-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 /* Label badge sinkronisasi: penuh di layar lebar, ringkas di layar kecil. */
@@ -741,14 +758,14 @@ a:hover {
 }
 
 .btn-primary {
-  background: var(--primary);
+  background: var(--primary-solid);
   color: var(--on-primary);
   box-shadow: 0 1px 2px rgba(238, 77, 45, 0.2);
 }
 
 .btn-primary:hover:not(:disabled) {
   background: var(--primary-hover);
-  color: #fff;
+  color: var(--on-primary);
   box-shadow: 0 3px 6px rgba(238, 77, 45, 0.3);
 }
 
@@ -842,8 +859,11 @@ a:hover {
 }
 
 @media (max-width: 639px) {
+  /* Satu kolom. Dua kolom memaksa lebar minimum isi kartu (mis. "Status
+     Kredensial" + badge "Aktif") melebihi 375px — sumber geser mendatar di
+     halaman Hubungkan Shopee. */
   .stat-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: 1fr;
     gap: 10px;
   }
 
@@ -1003,6 +1023,31 @@ a:hover {
   max-width: 100%;
   padding-bottom: 4px;
   -webkit-overflow-scrolling: touch;
+}
+
+/* Chip tidak boleh mengecil sampai teksnya terpotong; biarkan barisnya yang
+   bergeser mendatar (di dalam wadahnya sendiri, bukan seluruh halaman). */
+.filter-chips > * {
+  flex: 0 0 auto;
+}
+
+/* Layar sangat sempit (≤480px): tombol "Tersambung …" hanya ikon + titik
+   status. Teksnya tetap tersedia lewat `title`/aria-label, dan ini yang
+   membuat topbar muat 360px tanpa geser mendatar (terukur lebih 10px). */
+@media (max-width: 480px) {
+  .auto-sync-label-short {
+    display: none;
+  }
+}
+
+/* Varian yang MEMBUNGKUS: dipakai baris chip tanggal di halaman Pesanan.
+   Di ponsel, menggeser chip yang tidak terlihat lebih merepotkan daripada
+   membiarkannya turun ke baris berikutnya. */
+@media (max-width: 639px) {
+  .filter-chips-wrap {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
 }
 
 .filter-chips::-webkit-scrollbar {
@@ -1323,3 +1368,343 @@ a:hover {
 .mb12 { margin-bottom: 12px; }
 .mb16 { margin-bottom: 16px; }
 .mb24 { margin-bottom: 24px; }
+
+
+/* ============================================================
+   ALIAS TOKEN & TEMA (TERANG / GELAP)
+   ============================================================
+
+   Sebelum blok ini, sebagian kode memakai nama variabel yang TIDAK PERNAH
+   didefinisikan (--danger, --warning, --border, --muted, --surface-container,
+   --subtle, --info). Pemakaian `var(--danger, #ef4444)` terlihat "aman" karena
+   memakai nilai cadangan, tetapi cadangan itu HANYA dipakai saat variabel tidak
+   ada — artinya tema gelap tidak akan pernah mengubah warna tersebut.
+   Semua nama itu sekarang punya nilai nyata, sehingga `var(--x, fallback)`
+   otomatis ikut tema. Nilai cadangan di komponen dibiarkan apa adanya.
+   ============================================================ */
+
+:root {
+  --danger: var(--error);
+  --warning: var(--tertiary);
+  --info: #0284c7;
+  --border: var(--outline-variant);
+  --surface-container: var(--surface);
+  --surface-elevated: var(--surface);
+  --muted: var(--on-surface-variant);
+  --subtle: var(--surface-low);
+  --color-primary: var(--primary);
+  --info-container: #e0f2fe;
+  --on-info-container: #0369a1;
+  --info-border: #bae6fd;
+  /* Topbar semi-transparan (dengan blur). Ditulis sebagai token karena versi
+     lamanya `rgba(255,255,255,.9)` tetap putih di tema gelap sehingga teks
+     topbar nyaris tidak terbaca (kontras 1,05:1 — terukur di produksi). */
+  --topbar-bg: rgba(255, 255, 255, 0.9);
+  color-scheme: light;
+}
+
+/* Tema gelap: seluruh permukaan, teks, garis, dan warna status diturunkan ulang.
+   Tidak ada komponen yang perlu diubah — semua sudah memakai token di atas. */
+[data-theme='dark'] {
+  --primary: #ff6b4a;
+  --primary-hover: #ff8163;
+  --primary-active: #e8563a;
+  --primary-strong: #ff9d86;
+  --primary-solid: #ff6b4a;
+  --on-primary: #2a0d06;
+  --primary-container: #3b1a12;
+  --on-primary-container: #ffc0b0;
+  --primary-border: #5a2a1e;
+
+  --secondary: #7cb0ff;
+  --secondary-hover: #9cc4ff;
+  --on-secondary: #06213f;
+  --secondary-container: #16283f;
+  --on-secondary-container: #a9caff;
+  --secondary-border: #24405f;
+
+  --tertiary: #fbbf24;
+  --tertiary-container: #3a2c0d;
+  --on-tertiary-container: #fcd77a;
+  --tertiary-border: #5a4614;
+
+  --error: #f87171;
+  --error-hover: #fca5a5;
+  --on-error: #2a0a0a;
+  --error-container: #3a1618;
+  --on-error-container: #fbb4b4;
+  --error-border: #5a2226;
+
+  --success: #34d399;
+  --on-success: #052e1d;
+  --success-container: #12301f;
+  --on-success-container: #8ce0b8;
+  --success-border: #1d4c33;
+
+  --background: #0b1220;
+  --on-background: #e6edf7;
+  --surface: #121a29;
+  --surface-subtle: #141d2c;
+  --surface-low: #182233;
+  --surface-high: #22304a;
+  --surface-card: #121a29;
+  --surface-container: #182233;
+  --surface-elevated: #1b2740;
+  --on-surface: #e6edf7;
+  --on-surface-variant: #a4b4c9;
+  --on-surface-muted: #7f90a8;
+
+  --outline: #3a4c66;
+  --outline-variant: #2a3a50;
+  --divider: #223047;
+  --border: #2a3a50;
+  --focus-ring: #7cb0ff;
+
+  --danger: #f87171;
+  --warning: #fbbf24;
+  --info: #38bdf8;
+  --muted: #a4b4c9;
+  --subtle: #182233;
+  --color-primary: #ff6b4a;
+  --info-container: #0c2b3d;
+  --on-info-container: #8ed7f7;
+  --info-border: #164258;
+  --topbar-bg: rgba(18, 26, 41, 0.9);
+
+  --e-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+  --e-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.5), 0 1px 2px -1px rgba(0, 0, 0, 0.4);
+  --e-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
+  --e-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.55), 0 4px 6px -4px rgba(0, 0, 0, 0.4);
+  --e-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+}
+
+/* Perpindahan tema tidak boleh "berkedip" putih saat berpindah halaman:
+   warna latar diwarisi dari <html> supaya area di luar <body> ikut gelap. */
+html {
+  background: var(--background);
+}
+
+/* Badge informasi (dipakai kartu pesanan untuk status perjalanan paket). */
+.badge-info {
+  background: var(--info-container);
+  color: var(--on-info-container);
+  border: 1px solid var(--info-border);
+}
+
+/* ============================================================
+   HEADER HALAMAN, KARTU PESANAN, DAN PANEL AKSI MASSAL
+   ============================================================ */
+
+/* `.page-head` dipakai beberapa halaman (Kelola Tim, Pengaturan) tetapi belum
+   pernah didefinisikan. Tanpa aturan ini judul dan tombol aksi bertumpuk dan
+   tombol meluber keluar layar pada ponsel. */
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.page-head > div {
+  min-width: 0;
+}
+
+.page-head h1 {
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.25;
+  margin: 0 0 4px;
+}
+
+.page-head h2 {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+
+.order-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.bulk-bar {
+  position: sticky;
+  top: 8px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  border-left: 3px solid var(--color-primary);
+  background: var(--surface-elevated);
+}
+
+details.card > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+details.card > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.card > summary::after {
+  content: '▾';
+  font-size: 12px;
+  color: var(--on-surface-muted);
+  transition: transform 0.15s ease;
+}
+
+details.card[open] > summary::after {
+  transform: rotate(180deg);
+}
+
+/* ============================================================
+   PENYESUAIAN PONSEL
+   ============================================================ */
+
+@media (max-width: 639px) {
+  /* Topbar harus muat di 375px tanpa geser mendatar.
+     `flex-shrink: 0` pada `.topbar-right` membuat tombol tema + status sync +
+     badge peran berdesakan sampai melewati lebar layar (terukur 414px).
+     Badge peran disembunyikan karena hanya kosmetik — penjaga akses sebenarnya
+     ada di server. */
+  .topbar {
+    padding: 0 12px;
+    gap: 8px;
+  }
+
+  .topbar-left {
+    overflow: hidden;
+  }
+
+  .topbar-left > div {
+    min-width: 0;
+  }
+
+  .topbar-left > div > div:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .topbar-right {
+    flex-shrink: 1;
+    min-width: 0;
+    max-width: 100%;
+    gap: 6px;
+  }
+
+  .topbar-right .badge {
+    display: none;
+  }
+
+  /* Tabel di dalam kartu tetap bisa digeser mendatar, tetapi kolomnya tidak
+     dipaksa 640px sehingga isi tidak "hilang" di layar kecil. */
+  .card .table {
+    min-width: 480px;
+  }
+
+  .card {
+    padding: 14px;
+  }
+
+  /* Tombol aksi kartu pesanan memenuhi lebar agar mudah disentuh. */
+  .order-card-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .order-card-head > div:last-child {
+    justify-content: flex-start;
+  }
+
+  .bulk-bar {
+    position: static;
+    gap: 8px;
+  }
+
+  .page-head h1 {
+    font-size: 18px;
+  }
+}
+
+
+/* ============================================================
+   KARTU KERJA HALAMAN PESANAN
+   ============================================================
+   Tiga kartu ringkas (Pesanan Baru / Sudah Ada Resi / Perlu Diproses).
+   Menggantikan 17 kartu + dua baris chip yang memenuhi satu layar.
+   ============================================================ */
+
+.queue-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.queue-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--primary);
+  border-radius: var(--r-default);
+  background: var(--surface);
+  color: var(--on-surface);
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.queue-card:hover {
+  box-shadow: var(--e-sm);
+}
+
+.queue-card.is-active {
+  background: var(--surface-elevated);
+  box-shadow: 0 0 0 1px var(--outline);
+}
+
+.queue-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--on-surface-variant);
+}
+
+.queue-card-value {
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.15;
+  font-feature-settings: 'tnum';
+}
+
+.queue-card-hint {
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+@media (max-width: 639px) {
+  .queue-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .queue-card-value {
+    font-size: 22px;
+  }
+}

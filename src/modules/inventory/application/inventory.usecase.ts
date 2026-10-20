@@ -583,6 +583,58 @@ export async function releaseReservationsForOrder(
 }
 
 /**
+ * Tandai seluruh fulfillment order milik satu pesanan sebagai EXCEPTION.
+ *
+ * Dipakai saat pesanan dibatalkan di marketplace. Sebelumnya hanya reservasi
+ * stoknya yang dilepas, sedangkan baris fulfillment-nya dibiarkan diam —
+ * pesanan yang sudah batal tetap dihitung sebagai "menunggu stok" pada
+ * ringkasan dashboard, sehingga angka di layar membengkak palsu.
+ *
+ * Idempoten: hanya fulfillment order yang masih dalam tahap kerja
+ * (belum COMPLETED / EXCEPTION) yang diperbarui. Pemanggilan berulang
+ * (misalnya Shopee mengirim status CANCELLED berkali-kali) tidak menimbulkan
+ * efek ganda.
+ *
+ * Catatan: transisi ke EXCEPTION tidak memotong stok. Pemotongan stok hanya
+ * terjadi pada satu pintu: `completePacking` di modul fulfillment.
+ *
+ * Diletakkan di modul inventory (bukan fulfillment) karena dipanggil dari
+ * `importOrder` bersamaan dengan `releaseReservationsForOrder` — menempatkannya
+ * di modul fulfillment menciptakan ketergantungan melingkar antar modul.
+ */
+export async function markFulfillmentOrdersException(
+  tenantId: string,
+  orderId: string,
+): Promise<number> {
+  // Hanya fulfillment order yang masih berada pada tahap kerja. Yang sudah
+  // COMPLETED (sudah diserahkan kurir) dan EXCEPTION tetap utuh — menandai
+  // ulang keduanya menghapus jejak tahap yang sudah benar-benar terjadi.
+  const stillWorking = await prisma.fulfillmentOrder.findMany({
+    where: {
+      orderId,
+      order: { tenantId },
+      status: { notIn: ['COMPLETED', 'EXCEPTION'] },
+    },
+    select: { id: true, status: true },
+  });
+  if (stillWorking.length === 0) return 0;
+
+  await prisma.$transaction(async (tx) => {
+    for (const fo of stillWorking) {
+      // Klaim atomik lewat filter status: dua permintaan bersamaan tidak
+      // bisa sama-sama menandai fulfillment yang sama.
+      await tx.fulfillmentOrder.updateMany({
+        where: { id: fo.id, status: fo.status },
+        data: { status: 'EXCEPTION' },
+      });
+    }
+  });
+
+  logger.info('Fulfillment orders marked EXCEPTION', { tenantId, orderId, count: stillWorking.length });
+  return stillWorking.length;
+}
+
+/**
  * Bersihkan reservasi yatim: reservasi masih ACTIVE padahal pesanannya sudah
  * tidak butuh lagi.
  *
