@@ -4,6 +4,7 @@ import type {
   MarketplaceOrder,
   MarketplaceProduct,
   MarketplaceProductVariant,
+  CancelOrderResult,
   ShopCredentials,
   SyncOptions,
   TrackingInfo,
@@ -1091,6 +1092,40 @@ export class ShopeeAdapter implements MarketplaceAdapter {
    * dukungan Shopee menghasilkan `logistics.ship_order_unsupport_dropoff` dan
    * operator tidak punya cara memperbaikinya sendiri.
    */
+  /**
+   * Membatalkan pesanan di Shopee — `POST /api/v2/order/cancel_order`.
+   *
+   * Dipakai untuk MENYETUJUI pembatalan yang diajukan pembeli. Shopee v2 tidak
+   * menyediakan endpoint "tolak pembatalan", jadi penolakan tetap di Seller
+   * Centre. Efek sampingnya: `cancel_by` tercatat `seller` (bawaan Shopee) —
+   * sudah disetujui pemilik toko.
+   */
+  async cancelOrder(
+    creds: ShopCredentials,
+    input: { orderSn: string; cancelReason?: string },
+  ): Promise<CancelOrderResult> {
+    const cfg = await this.cfg();
+    try {
+      await callShopee<Record<string, unknown>>(
+        cfg,
+        '/api/v2/order/cancel_order',
+        {
+          method: 'POST',
+          body: {
+            order_sn: input.orderSn,
+            cancel_reason: input.cancelReason ?? 'OTHERS',
+          },
+        },
+        { shopId: creds.shopId, accessToken: creds.accessToken },
+      );
+      return { ok: true, message: '' };
+    } catch (err) {
+      // Pesan Shopee diteruskan apa adanya: operator perlu tahu alasan aslinya
+      // (mis. paket sudah di jalan), bukan pesan teknis yang digeneralisasi.
+      return { ok: false, message: (err as Error).message };
+    }
+  }
+
   async arrangeShipment(creds: ShopCredentials, input: ArrangeShipmentInput): Promise<ArrangeShipmentResult> {
     const cfg = await this.cfg();
     try {

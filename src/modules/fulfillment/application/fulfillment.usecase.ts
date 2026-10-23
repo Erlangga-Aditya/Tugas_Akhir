@@ -215,7 +215,12 @@ async function ensurePickingTask(
 }
 
 /** Majukan fulfillment order sampai PICKED mengikuti transisi yang sah (tanpa bypass state machine). */
-async function advanceToPicked(tx: Prisma.TransactionClient, fulfillmentOrderId: string, from: string) {
+async function advanceToPicked(
+  tx: Prisma.TransactionClient,
+  fulfillmentOrderId: string,
+  from: string,
+  actorId?: string,
+) {
   const chain = CHAIN_TO_PICKED[from];
   if (!chain) return;
   let current = from;
@@ -223,7 +228,12 @@ async function advanceToPicked(tx: Prisma.TransactionClient, fulfillmentOrderId:
     assertTransition(current, step);
     await tx.fulfillmentOrder.update({
       where: { id: fulfillmentOrderId },
-      data: { status: step, ...(step === 'PICKING' ? { startedAt: new Date() } : {}) },
+      data: {
+        status: step,
+        ...(step === 'PICKING' ? { startedAt: new Date() } : {}),
+        // Aktor pengambilan barang dicatat saat status mencapai PICKED.
+        ...(step === 'PICKED' && actorId ? { pickedById: actorId, pickedAt: new Date() } : {}),
+      },
     });
     current = step;
   }
@@ -701,7 +711,12 @@ export async function completePacking(
     }
 
     // 2. Selesaikan dikemas. Handover nanti menjalankan rantai transisi yang sah.
-    await tx.fulfillmentOrder.update({ where: { id: fulfillmentOrderId }, data: { status: 'PACKED' } });
+    await tx.fulfillmentOrder.update({
+      where: { id: fulfillmentOrderId },
+      // Aktor packing dicatat di baris fulfillment: inilah dasar pembayaran
+      // packer per paket (bukan hanya audit log).
+      data: { status: 'PACKED', packedById: actorId, packedAt: new Date() },
+    });
     await tx.packingTask.create({
       data: { fulfillmentOrderId, status: 'COMPLETED', packedById: actorId, packedAt: new Date(), notes },
     });
@@ -831,7 +846,12 @@ export async function handOverToCarrier(
 
     await tx.fulfillmentOrder.update({
       where: { id: fulfillmentOrderId },
-      data: { status: 'HANDED_OVER', completedAt: new Date() },
+      data: {
+        status: 'HANDED_OVER',
+        completedAt: new Date(),
+        handedOverById: actorId,
+        handedOverAt: new Date(),
+      },
     });
 
     return shipment;
@@ -979,7 +999,16 @@ export async function getFulfillmentStation(
         where: { status: { notIn: ['COMPLETED'] } },
         orderBy: { createdAt: 'desc' },
         take: 1,
-        select: { id: true, status: true, warehouseId: true },
+        select: {
+          id: true,
+          status: true,
+          warehouseId: true,
+          pickedById: true,
+          packedById: true,
+          handedOverById: true,
+          packedAt: true,
+          handedOverAt: true,
+        },
       },
     },
     orderBy: [{ shipByAt: sortDir }, { placedAt: sortDir }],
@@ -1071,6 +1100,17 @@ export async function getFulfillmentStation(
       lateRisk: resolveLateRisk({ externalStatus: o.externalStatus, shipByAt: o.shipByAt, now }),
       fulfillmentId: fo?.id ?? null,
       fulfillmentStatus: fo?.status ?? null,
+      /** Jejak aktor per tahap; nama diisi setelah seluruh pesanan terkumpul. */
+      aktor: {
+        pickedById: fo?.pickedById ?? null,
+        packedById: fo?.packedById ?? null,
+        handedOverById: fo?.handedOverById ?? null,
+        packedAt: fo?.packedAt?.toISOString() ?? null,
+        handedOverAt: fo?.handedOverAt?.toISOString() ?? null,
+        pickedByNama: null as string | null,
+        packedByNama: null as string | null,
+        handedOverByNama: null as string | null,
+      },
       awb: shipment?.awb ?? null,
       carrier: shipment?.carrier ?? null,
       /**
@@ -1120,6 +1160,28 @@ export async function getFulfillmentStation(
       hasAwb: Boolean(order.awb && order.awb.trim() !== ''),
     }),
   }));
+  // Nama pelaku diambil sekali untuk seluruh halaman. Laporan per-orang butuh
+  // nama, dan query per pesanan akan boros (N+1).
+  const idPelaku = [
+    ...new Set(
+      unified
+        .flatMap((o) => [o.aktor.pickedById, o.aktor.packedById, o.aktor.handedOverById])
+        .filter(Boolean) as string[],
+    ),
+  ];
+  if (idPelaku.length > 0) {
+    const pengguna = await prisma.user.findMany({
+      where: { id: { in: idPelaku } },
+      select: { id: true, name: true },
+    });
+    const nama = new Map(pengguna.map((u) => [u.id, u.name]));
+    for (const o of unified) {
+      o.aktor.pickedByNama = o.aktor.pickedById ? nama.get(o.aktor.pickedById) ?? null : null;
+      o.aktor.packedByNama = o.aktor.packedById ? nama.get(o.aktor.packedById) ?? null : null;
+      o.aktor.handedOverByNama = o.aktor.handedOverById ? nama.get(o.aktor.handedOverById) ?? null : null;
+    }
+  }
+
   const kartu = countBuckets(withQueue.map((item) => item.queue));
 
   // Anomali yang bisa ditutup operator: paket sudah keluar gudang (dijemput /

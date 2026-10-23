@@ -49,7 +49,8 @@ def deploy(client: paramiko.SSHClient) -> int:
 
     perintah = (
         f'cd {APP_DIR} && '
-        'tar xzf /tmp/ef8.tgz --overwrite && '
+        # Hapus dulu src/prisma di server: tar hanya menimpa berkas yang ada, sehingga berkas yang sudah DIHAPUS di repo akan tertinggal dan menggagalkan build.
+        'rm -rf src prisma && tar xzf /tmp/ef8.tgz && '
         'npx prisma migrate deploy > /tmp/mig.log 2>&1; echo MIGRATE=$?; '
         'npx prisma generate > /tmp/gen.log 2>&1; echo GEN=$?; '
         'npm run build > /tmp/be.log 2>&1; echo BUILD_EXIT=$?; '

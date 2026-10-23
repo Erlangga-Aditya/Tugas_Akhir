@@ -183,21 +183,6 @@ describe('Shopee shipping document client — kegagalan sementara diulang', () =
     vi.useRealTimers();
   });
 
-  /**
-   * Jalankan seluruh pending promise sambil mendorong waktu.
-   *
-   * Promise dari `createDocument` ditahan dulu (`const p = ...`) lalu waktu
-   * dimajukan di sini. Semua test HARUS memakai helper ini supaya tidak ada
-   * promise yang masih menggantung saat `afterEach` mematikan fake timer —
-   * kalau tidak, `sleep()` tidak pernah resolve dan rejection-nya bocor sebagai
-   * unhandled rejection sehingga `vitest run` keluar dengan kode 1.
-   */
-  async function drainTimers(ticks = 30): Promise<void> {
-    for (let i = 0; i < ticks; i += 1) {
-      await vi.advanceTimersByTimeAsync(1_000);
-    }
-  }
-
   it('mengulang saat Shopee bilang "Number of response is less than expected"', async () => {
     fetchMock
       .mockResolvedValueOnce(batchFailure('Number of response is less than expected'))
@@ -206,7 +191,7 @@ describe('Shopee shipping document client — kegagalan sementara diulang', () =
 
     const p = createDocument(cfg, creds, target, 'NORMAL_AIR_WAYBILL');
     // Dorong waktu supaya seluruh jeda retry (1,5 dtk + 3 dtk) terlewati.
-    await drainTimers();
+    for (let i = 0; i < 10; i += 1) await vi.advanceTimersByTimeAsync(1_000);
 
     await expect(p).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -217,14 +202,12 @@ describe('Shopee shipping document client — kegagalan sementara diulang', () =
     // hanya membuang kuota API dan menunda pesan yang berguna.
     fetchMock.mockImplementation(() => Promise.resolve(batchFailure('Channel does not support this shipping document type')));
 
-    // Tangkap rejection SEGERA sebelum menunggu timer, supaya tidak lolos
-    // sebagai unhandled rejection saat test selesai.
     const p = createDocument(cfg, creds, target, 'NORMAL_AIR_WAYBILL');
     // Pasang handler penolakan dululu, baru jalan an waktu: tanpa ini, promise
     // sudah ditolak sebelum `expect(...).rejects` terpasang dan Node
     // melaporkannya sebagai Unhandled Rejection yang menyesatkan.
     const assertion = expect(p).rejects.toBeInstanceOf(ExternalIntegrationError);
-    await drainTimers();
+    for (let i = 0; i < 10; i += 1) await vi.advanceTimersByTimeAsync(1_000);
 
     await assertion;
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -235,7 +218,7 @@ describe('Shopee shipping document client — kegagalan sementara diulang', () =
 
     const p = createDocument(cfg, creds, target, 'NORMAL_AIR_WAYBILL');
     const assertion = expect(p).rejects.toThrow(/Number of response is less than expected/);
-    await drainTimers();
+    for (let i = 0; i < 20; i += 1) await vi.advanceTimersByTimeAsync(1_000);
 
     await assertion;
     // 1 + 2 retry = 3 percobaan, lalu berhenti.

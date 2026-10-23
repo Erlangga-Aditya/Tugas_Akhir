@@ -118,7 +118,12 @@ describe('completePacking — satu-satunya pintu pengurangan stok', () => {
     expect(result.deducted[0]).toMatchObject({ sku: 'SKU-1', quantity: 2, onHand: 8 });
     expect(tx.fulfillmentOrder.update).toHaveBeenCalledWith({
       where: { id: fulfillmentOrderId },
-      data: { status: 'PACKED' },
+      // Aktor packing ikut dicatat (dasar pembayaran packer per paket).
+      data: expect.objectContaining({
+        status: 'PACKED',
+        packedById: expect.any(String),
+        packedAt: expect.any(Date),
+      }),
     });
   });
 
@@ -249,7 +254,13 @@ describe('handOverToCarrier — tidak boleh memotong stok lagi', () => {
     });
     expect(tx.fulfillmentOrder.update).toHaveBeenNthCalledWith(2, {
       where: { id: fulfillmentOrderId },
-      data: { status: 'HANDED_OVER', completedAt: expect.any(Date) },
+      // Aktor penyerahan juga dicatat (dasar pembayaran kurir internal).
+      data: expect.objectContaining({
+        status: 'HANDED_OVER',
+        completedAt: expect.any(Date),
+        handedOverById: expect.any(String),
+        handedOverAt: expect.any(Date),
+      }),
     });
     expect(tx.inventoryMovement.create).not.toHaveBeenCalled();
   });

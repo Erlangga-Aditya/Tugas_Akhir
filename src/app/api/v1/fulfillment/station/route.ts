@@ -57,7 +57,12 @@ export async function GET(request: NextRequest) {
       pageSize,
     });
 
-    return successResponse({ ...station, rangePreset: preset }, { requestId });
+    // Izin yang dibutuhkan UI, dihitung server. UI tidak boleh menebak dari
+    // peran yang disimpannya sendiri — server tetap penjaga terakhir.
+    return successResponse(
+      { ...station, rangePreset: preset, izin: { setujuiPembatalan: ctx.role === 'OWNER' } },
+      { requestId },
+    );
   } catch (error) {
     return handleRouteError(error, requestId, request);
   }

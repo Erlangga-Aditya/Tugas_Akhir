@@ -27,6 +27,8 @@ export const PERMISSIONS = {
   'page.inventory': { label: 'Stok Gudang', group: 'Halaman' },
   /** Produk */
   'page.products': { label: 'Produk', group: 'Halaman' },
+  /** Produksi: daftar barang yang belum ada & lembar kerja tim produksi */
+  'page.production': { label: 'Produksi', group: 'Halaman' },
   /** Lacak Kiriman */
   'page.shipping': { label: 'Lacak Kiriman', group: 'Halaman' },
   /** Pengembalian */

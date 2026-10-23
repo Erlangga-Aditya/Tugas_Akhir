@@ -131,6 +131,13 @@ export interface ArrangeShipmentResult {
   message?: string;
 }
 
+/** Hasil aksi pembatalan pesanan di marketplace. */
+export interface CancelOrderResult {
+  ok: boolean;
+  /** Pesan apa adanya dari marketplace (kosong bila sukses). */
+  message: string;
+}
+
 export interface SyncOptions {
   fromDate?: Date;
   toDate?: Date;
