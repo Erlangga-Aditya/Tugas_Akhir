@@ -41,6 +41,17 @@ export interface StationOrder {
   cancelledAt: string | null;
   /** Kategori pembatalan (DIAJUKAN = masih bisa ditanggapi). */
   cancelCategory: 'DIAJUKAN' | 'DIBATALKAN_PEMBELI' | 'DIBATALKAN_PENJUAL' | 'DIBATALKAN_SISTEM' | null;
+  /** Jejak aktor per tahap (dasar laporan per-orang). */
+  aktor: {
+    pickedById: string | null;
+    packedById: string | null;
+    handedOverById: string | null;
+    packedAt: string | null;
+    handedOverAt: string | null;
+    pickedByNama: string | null;
+    packedByNama: string | null;
+    handedOverByNama: string | null;
+  };
   /** Risiko keterlambatan menurut tenggat kirim. */
   lateRisk: 'TIDAK_RELEVAN' | 'AMAN' | 'BERESIKO' | 'BESOK_BATAL' | 'TERLAMBAT';
   fulfillmentId: string | null;
@@ -83,6 +94,8 @@ export interface StationResponse {
    * rentang tanggal yang dipilih (kapan diajukan / kapan batal); sisanya
    * dihitung dari tenggat kirim terhadap hari ini.
    */
+  /** Izin yang diberikan server untuk UI (bukan tebakan dari peran). */
+  izin: { setujuiPembatalan: boolean };
   perhatian: {
     pembatalanDiajukan: number;
     batalSistem: number;

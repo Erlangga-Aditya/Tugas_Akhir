@@ -33,6 +33,17 @@ VPS_PASS='...' VPS_SCRIPT='verify-cancel-cards.sh' \
   uv run --with paramiko python scripts/vps-deploy-paramiko.py verify
 ```
 
+### Cek kesehatan rutin
+
+```bash
+VPS_PASS='...' VPS_SCRIPT='vps-health.sh' \
+  uv run --with paramiko python scripts/vps-deploy-paramiko.py verify
+```
+
+Menampilkan disk, jumlah & ukuran binlog, status PM2, health HTTP, status
+migrasi, dan ukuran database — cukup satu perintah untuk memastikan server
+sehat sebelum/sesudah deploy.
+
 ### Jangan mengandalkan `ssh`/`scp` biasa
 Percobaan SSH beruntun bisa ditolak (`Permission denied (publickey,password)`)
 walaupun koneksi TCP & host key normal. Itu pembatasan di server, bukan kunci

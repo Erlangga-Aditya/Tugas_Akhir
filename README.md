@@ -1,123 +1,67 @@
 # E-Fulfill Hub
 
-ERP operasional gudang (fulfillment) untuk penjual Shopee: sinkronisasi pesanan real-time,
-prioritas pengerjaan, picking & scanning, packing, pengiriman, retur/QC, dan buku besar stok —
-dalam satu workspace.
+Aplikasi operasional gudang untuk penjual Shopee **make-to-order**: pesanan
+masuk → dipilih owner → produksi (bila stok kosong) → ambil barang → packing →
+serahkan ke kurir → terlacak sampai diterima pembeli. Setiap aksi tercatat
+**siapa pelakunya**, karena pembayaran packer & kurir internal dihitung per paket.
 
-Dibangun dengan **Next.js 16 (App Router) + React 19 + Prisma + MySQL 8 + TypeScript (strict)**.
+Produksi: `https://103-178-174-224.sslip.io` (VPS `103.178.174.224`,
+`/opt/efulfill/app`, PM2 `efulfill`, port 3000).
 
----
+## Dokumen
 
-## 1. Prasyarat
+| Berkas | Isi |
+|---|---|
+| **`docs/ROADMAP.md`** | tujuan, keputusan, status, roadmap & task — **satu-satunya sumber kebenaran** |
+| `deploy/RUNBOOK-OPERASIONAL.md` | prosedur darurat VPS (disk penuh, migrasi gagal, aturan status) |
+| `docs/panduan-operator.md` | panduan pemakaian untuk operator gudang |
+| `CLAUDE.md`, `AGENTS.md` | aturan kerja untuk agen/editor kode |
 
-- **Node.js 20+** (dianjurkan 22 LTS)
-- **MySQL 8.x** berjalan di `localhost:3306` (mis. Laragon, atau MySQL apa pun)
-- `npm`
+Jangan menambah berkas dokumentasi baru — perbarui salah satu di atas.
 
-## 2. Setup lokal
+## Menjalankan lokal
 
 ```bash
-# 1. Install dependensi
 npm install
-
-# 2. Siapkan database
-#    Jalankan di MySQL:
-#    CREATE DATABASE efulfillhub CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
-# 3. Konfigurasi environment
-cp .env.example .env.local
-#    lalu isi DATABASE_URL dan generate JWT_SECRET + ENCRYPTION_KEY (lihat .env.example)
-
-# 4. Migrasi + seed (seed membuat tenant, user, gudang, katalog, stok, toko Shopee)
-npx prisma migrate dev
-#    atau bila sudah ada migrasi:
-npx prisma migrate reset --force   # reset + reseed
-
-# 5. Jalankan
-npm run dev
+cp .env.example .env          # isi DATABASE_URL, SHOPEE_*, dst.
+npx prisma generate
+npx prisma migrate deploy
+npm run dev                   # http://localhost:3000
 ```
 
-Buka `http://localhost:3000`.
+## Perintah wajib sebelum deploy
 
-## 3. Akun (dibuat oleh seed)
-
-| Peran | Email | Password |
-|---|---|---|
-| Owner (admin) | `owner@toko.id` | `Owner12345` |
-| Manager | `manager@toko.id` | `Manager12345` |
-| Staff (gudang) | `staff@toko.id` | `Staff12345` |
-
-> Tidak ada akun demo hardcoded di kode. Semua login memverifikasi ke database (bcrypt),
-> sesi memakai cookie `httpOnly` (JWT), bukan `localStorage`.
-
-## 4. Integrasi Shopee (Open Platform v2)
-
-Sistem **sudah siap penuh** untuk integrasi nyata; tinggal isi kredensial.
-
-1. Buka Shopee Open Platform Console, buat aplikasi, catat **Partner ID** & **Partner Key**.
-2. Isi di `.env.local`:
-   ```
-   SHOPEE_PARTNER_ID="<partner_id>"
-   SHOPEE_PARTNER_KEY="<partner_key>"
-   SHOPEE_REDIRECT_URL="http://localhost:3000/api/v1/integrations/shopee/callback"
-   SHOPEE_SANDBOX="true"          # untuk uji di sandbox dulu
-   ```
-3. Buka menu **Integrasi** → **Hubungkan via Shopee** (OAuth), atau **Input Kredensial Manual**.
-4. **Tarik Pesanan Sekarang** untuk sinkronisasi manual; push/webhook untuk real-time.
-
-Sampai akun partner Anda disetujui (review), seluruh alur tetap bisa diuji di **Sandbox**
-(`SHOPEE_SANDBOX=true`). Referensi lengkap & terverifikasi: `08-INTEGRATION-SHOPEE.md` dan
-`20-SHOPEE-API-REFERENCE.md`.
-
-## 5. Perintah
-
-| Perintah | Fungsi |
-|---|---|
-| `npm run dev` | Dev server (hot reload) |
-| `npm run build` | Build produksi |
-| `npm start` | Jalankan build produksi |
-| `npm run lint` | ESLint |
-| `npm run typecheck` | `tsc --noEmit` |
-| `npm run test` | Vitest (unit) |
-| `npx prisma migrate dev` | Terapkan migrasi |
-| `npx prisma migrate reset --force` | Reset + reseed |
-| `npx prisma studio` | GUI database |
-
-## 6. Struktur (arsitektur modular / clean)
-
-```
-src/
-  app/                 # Next.js App Router (halaman + API route)
-    api/v1/            #   API internal (REST)
-    dashboard/         #   Halaman workspace (dilindungi auth)
-  modules/             # Domain modular (per fitur)
-    <modul>/
-      domain/          #   Entitas + state machine (murni, tanpa framework)
-      application/     #   Use cases (orkestrasi)
-      infrastructure/  #   Adapter eksternal (Shopee, Prisma)
-  shared/              # Prisma client, error, envelope API
-  lib/                 # Klien API + komponen UI bersama
-  middleware.ts        # Auth cookie + proteksi rute + sanitasi header
-prisma/
-  schema.prisma        # Model data
-  migrations/          # Riwayat migrasi
-  seed.ts              # Seed data demo realistis
+```bash
+npx tsc --noEmit     # tipe
+npm run lint         # eslint
+npm run test         # unit test (cepat, tanpa Python)
+npm run build        # build produksi
 ```
 
-Aturan domain: modul tidak saling tahu detail internal; integrasi Shopee hanya hidup di
-`integrations/infrastructure/` (ADR-002). Lihat `05-ARCHITECTURE.md`.
+`npm run test:integration` — test berat (baca barcode PDF lewat Python/PyMuPDF,
+±1–2 menit). Dijalankan sebelum rilis, **tidak** ikut gate harian.
 
-## 7. Dokumentasi
+## Deploy
 
-| Dokumen | Isi |
-|---|---|
-| `01-PRD.md` | Visi & cakupan produk |
-| `04-DOMAIN-MODEL.md` | Entitas + state machine |
-| `05-ARCHITECTURE.md` | Arsitektur modular |
-| `06-DATA-MODEL.md` | Skema data |
-| `07-API-CONTRACT.md` | Kontrak API internal (normatif) |
-| `08-INTEGRATION-SHOPEE.md` | Desain integrasi Shopee (terverifikasi) |
-| `09-FULFILLMENT-RULES.md` | Aturan prioritas & fulfillment |
-| `10-SECURITY.md` | Model keamanan |
-| `19-DESIGN-SYSTEM.md` | Design system (token warna/tipe, tanpa gradient/emoji) |
-| `20-SHOPEE-API-REFERENCE.md` | Referensi mentah API Shopee v2 |
+```bash
+VPS_PASS='...' uv run --with paramiko python scripts/vps-deploy-paramiko.py deploy
+VPS_PASS='...' VPS_SCRIPT='vps-health.sh' \
+  uv run --with paramiko python scripts/vps-deploy-paramiko.py verify
+```
+
+Helper ini mengunggah `src`+`prisma`, menjalankan `migrate deploy`, `prisma
+generate`, `npm run build`, `pm2 restart`, lalu memeriksa `health`. Jangan
+memakai `ssh`/`scp` biasa: kunci publik mesin pengembangan ditolak server.
+
+## Arsitektur singkat
+
+```
+src/modules/<modul>/domain          aturan murni (tanpa I/O) + *.test.ts
+src/modules/<modul>/application     usecase: transaksi & orkestrasi
+src/modules/<modul>/infrastructure  Prisma, adapter Shopee
+src/app/api/v1/**                   route: validasi input + izin saja
+src/app/dashboard/**                UI; status/aksi datang dari server
+```
+
+Prinsip: satu sumber kebenaran per keputusan (lihat `docs/ROADMAP.md` §1), stok
+jujur lewat ledger, dan UI tidak pernah menghitung status sendiri.

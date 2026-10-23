@@ -24,8 +24,9 @@ import {
 } from 'lucide-react';
 import { api, openOfficialLabel } from '@/lib/api';
 import { usePermission } from '@/hooks/usePermission';
-import { Alert, EmptyState, ErrorState, LoadingState, PageHeader } from '@/components/ui';
+import { OperasionalSectionPesanan } from './operasional-section';
 import { BarcodeScanner, playScanFeedback } from '@/components/barcode-scanner';
+import { Alert, EmptyState, ErrorState, LoadingState, PageHeader } from '@/components/ui';
 import { StockPanel } from '@/components/stock-panel';
 import { RANGE_LABEL, RANGE_PRESETS, type RangePreset } from '@/modules/fulfillment/domain/date-range';
 import type { QueueBucket } from '@/modules/fulfillment/domain/work-queue';
@@ -410,6 +411,36 @@ export default function PesananPengirimanPage() {
    * transit / diterima). Tanpa ini, scan resi paket tersebut berhenti di
    * pemeriksaan stok dan menampilkan "harus tambah stok".
    */
+  /**
+   * Menyetujui pembatalan yang diajukan pembeli. Konfirmasi dulu, karena
+   * efeknya membatalkan pesanan di Shopee dan melepas stok.
+   */
+  async function setujuiPembatalan(orderId: string, externalOrderId: string) {
+    const yakin = window.confirm(
+      `Setujui pembatalan pesanan ${externalOrderId}?\n\n` +
+        'Pesanan akan dibatalkan di Shopee (tercatat sebagai penjual) dan stok yang ' +
+        'ditahan pesanan ini dilepas. Tindakan ini tidak bisa dibatalkan dari aplikasi.',
+    );
+    if (!yakin) return;
+
+    setBusyKey(`batal-${orderId}`);
+    setNotice(null);
+    try {
+      const res = await api<{ message: string }>(`/api/v1/orders/${orderId}/cancellation`, {
+        method: 'POST',
+        body: { operation: 'ACCEPT' },
+      });
+      setOutcome(null);
+      cacheRef.current.clear();
+      await load({ force: true });
+      setNotice({ tone: 'success', text: res.message });
+    } catch (e) {
+      setNotice({ tone: 'danger', text: (e as Error).message });
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
   async function tutupPaketSudahDikirim() {
     setReconciling(true);
     setNotice(null);
@@ -788,6 +819,9 @@ export default function PesananPengirimanPage() {
         )}
       </div>
 
+      {/* Ringkasan operasional gudang: keadaan sekarang + kejadian dalam rentang */}
+      <OperasionalSectionPesanan />
+
       {/* Rentang tanggal + tiga kartu kerja. */}
       <div className="card mb16" style={{ padding: '12px 14px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
@@ -1065,6 +1099,11 @@ export default function PesananPengirimanPage() {
               }
               onFocusScanner={() => focusScannerForOrder(o)}
               onPrintLabel={() => void handlePrintOfficialLabel(o.orderId, o.externalOrderId)}
+              onSetujuiPembatalan={
+                data?.izin.setujuiPembatalan
+                  ? () => void setujuiPembatalan(o.orderId, o.externalOrderId)
+                  : undefined
+              }
               onAddStock={(variantId) => {
                 setStockVariantId(variantId);
                 setStockOpen(true);

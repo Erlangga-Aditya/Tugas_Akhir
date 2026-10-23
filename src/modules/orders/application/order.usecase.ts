@@ -239,7 +239,13 @@ export async function importOrder(
     //
     // Idempoten: hanya reservasi `ACTIVE` yang dilepas, jadi aman saat Shopee
     // mengirim status `CANCELLED` berulang kali.
-    if (incoming === 'CANCELLED' && existing.status !== 'CANCELLED') {
+    //
+    // Kondisi sengaja TIDAK mengecek `existing.status !== 'CANCELLED'`: bila
+    // pesanan dibatalkan saat versi lama belum punya pembersihan ini, baris
+    // fulfillment-nya bisa masih "menunggu stok". Tanpa syarat itu, sinkronisasi
+    // berikutnya yang menemukan pesanan itu lagi akan tetap menyembuhkannya —
+    // data yatim tidak bisa bertahan lebih dari satu putaran sinkronisasi.
+    if (incoming === 'CANCELLED') {
       await releaseReservationsForOrder(
         existing.tenantId,
         existing.id,

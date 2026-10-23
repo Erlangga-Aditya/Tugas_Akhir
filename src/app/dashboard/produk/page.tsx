@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Pencil,
   Trash2,
+  Boxes,
   Layers,
   
   AlertCircle,
@@ -62,6 +63,15 @@ export default function ProdukPage() {
   const [editProduct, setEditProduct] = useState<Product | null>(null);
   const [variantsModalProduct, setVariantsModalProduct] = useState<Product | null>(null);
   const [deleteProductTarget, setDeleteProductTarget] = useState<Product | null>(null);
+  /**
+   * Stok per varian. Tiap jilid punya angka sendiri (Jilid 1 ≠ Jilid 2 ≠ Set),
+   * jadi pengaturan dilakukan per varian — bukan satu angka untuk produk.
+   */
+  const [stockProduct, setStockProduct] = useState<Product | null>(null);
+  const [stockDraft, setStockDraft] = useState<Record<string, string>>({});
+  const [savingStock, setSavingStock] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   // Warehouses list for initial stock allocation
   const [warehouses, setWarehouses] = useState<Array<{ id: string; name: string }>>([]);
@@ -98,6 +108,12 @@ export default function ProdukPage() {
   });
 
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    api<{ role?: string }>('/api/v1/auth/me')
+      .then((me) => setIsOwner(me?.role === 'OWNER'))
+      .catch(() => setIsOwner(false));
+  }, []);
 
   // Load warehouses on mount
   useEffect(() => {
@@ -326,13 +342,103 @@ export default function ProdukPage() {
     }
   }
 
+  const bukaStok = (p: Product) => {
+    setStockProduct(p);
+    setStockDraft(Object.fromEntries(p.variants.map((v) => [v.id, String(v.stock?.onHand ?? 0)])));
+    setNotice(null);
+  };
+
+  /**
+   * Menyimpan stok per varian. Hanya varian yang angkanya berubah yang dikirim,
+   * supaya ledger tidak dipenuhi baris "tidak berubah".
+   */
+  const simpanStok = async () => {
+    if (!stockProduct) return;
+    const gudangId = warehouses[0]?.id;
+    if (!gudangId) {
+      setNotice({ tone: 'danger', text: 'Belum ada gudang. Tambahkan gudang dulu di Pengaturan.' });
+      return;
+    }
+
+    const berubah = stockProduct.variants.filter(
+      (v) => Number(stockDraft[v.id] ?? v.stock?.onHand ?? 0) !== (v.stock?.onHand ?? 0),
+    );
+    if (berubah.length === 0) {
+      setNotice({ tone: 'success', text: 'Tidak ada angka yang berubah.' });
+      setStockProduct(null);
+      return;
+    }
+
+    setSavingStock(true);
+    try {
+      for (const v of berubah) {
+        const angka = Number(stockDraft[v.id]);
+        if (!Number.isFinite(angka) || angka < 0) {
+          throw new Error(`Angka stok untuk ${v.name} tidak valid.`);
+        }
+        await api('/api/v1/inventory/adjustments', {
+          method: 'POST',
+          body: {
+            warehouseId: gudangId,
+            variantId: v.id,
+            countedOnHand: angka,
+            reason: 'STOCK_COUNT',
+            notes: 'Disesuaikan dari menu Produk',
+          },
+        });
+      }
+      setNotice({ tone: 'success', text: `Stok ${berubah.length} varian diperbarui.` });
+      setStockProduct(null);
+      load();
+    } catch (e) {
+      setNotice({ tone: 'danger', text: (e as Error).message });
+    } finally {
+      setSavingStock(false);
+    }
+  };
+
+  const kosongkanSemuaStok = async () => {
+    const yakin = window.confirm(
+      'Kosongkan stok SEMUA produk menjadi 0?\n\n' +
+        'Angka stok sekarang tidak dipakai lagi; Anda mengisi sendiri stok fisik setelahnya. ' +
+        'Setiap perubahan tetap tercatat di riwayat (ledger), jadi masih bisa ditelusuri.',
+    );
+    if (!yakin) return;
+
+    setResetting(true);
+    setNotice(null);
+    try {
+      const res = await api<{ message: string }>('/api/v1/inventory/reset-all', {
+        method: 'POST',
+        body: { notes: 'Kosongkan stok awal oleh owner' },
+      });
+      setNotice({ tone: 'success', text: res.message });
+      load();
+    } catch (e) {
+      setNotice({ tone: 'danger', text: (e as Error).message });
+    } finally {
+      setResetting(false);
+    }
+  };
+
   return (
     <div>
       <PageHeader
         title="Katalog Produk & Master SKU"
         subtitle="Kelola master produk, foto barang, SKU varian, bobot timbangan, barcode, dan persediaan awal inventori"
         actions={
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {isOwner && (
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                disabled={resetting}
+                onClick={() => void kosongkanSemuaStok()}
+                title="Mengosongkan stok semua varian (khusus pemilik toko)"
+              >
+                {resetting ? 'Mengosongkan...' : 'Kosongkan semua stok'}
+              </button>
+            )}
             <button
               type="button"
               className="btn btn-secondary btn-sm"
@@ -529,6 +635,16 @@ export default function ProdukPage() {
                         >
                           <Layers size={13} />
                           <span>Varian ({p.variants.length})</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => bukaStok(p)}
+                          title="Atur stok per varian (tiap jilid punya angka sendiri)"
+                        >
+                          <Boxes size={13} />
+                          <span>Stok</span>
                         </button>
 
                         <button
@@ -1027,6 +1143,59 @@ export default function ProdukPage() {
               Batal
             </button>
           </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(stockProduct)}
+        onClose={() => setStockProduct(null)}
+        title={`Atur Stok — ${stockProduct?.name ?? ''}`}
+      >
+        <p className="small muted" style={{ marginTop: 0 }}>
+          Tiap varian punya angka sendiri. Jilid 1 tidak memakai stok Jilid 2, dan produk
+          SET tidak mengambil stok dari jilid mana pun.
+        </p>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Varian</th>
+                <th>SKU</th>
+                <th className="num">Stok fisik</th>
+                <th className="num">Dipesan</th>
+                <th className="num">Stok baru</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(stockProduct?.variants ?? []).map((v) => (
+                <tr key={v.id}>
+                  <td style={{ fontWeight: 600 }}>{v.name}</td>
+                  <td className="small muted" style={{ wordBreak: 'break-all' }}>{v.sku}</td>
+                  <td className="num">{v.stock?.onHand ?? 0}</td>
+                  <td className="num">{v.stock?.reserved ?? 0}</td>
+                  <td className="num">
+                    <input
+                      type="number"
+                      min={0}
+                      inputMode="numeric"
+                      value={stockDraft[v.id] ?? ''}
+                      onChange={(e) => setStockDraft((prev) => ({ ...prev, [v.id]: e.target.value }))}
+                      style={{ width: 90, textAlign: 'right' }}
+                      aria-label={`Stok baru ${v.name}`}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 16 }}>
+          <button type="button" className="btn btn-secondary" onClick={() => setStockProduct(null)}>
+            Batal
+          </button>
+          <button type="button" className="btn btn-primary" disabled={savingStock} onClick={() => void simpanStok()}>
+            {savingStock ? 'Menyimpan...' : 'Simpan stok'}
+          </button>
         </div>
       </Modal>
     </div>

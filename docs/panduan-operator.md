@@ -156,7 +156,25 @@ Hanya **owner** yang bisa membuka menu **Kelola Tim**.
 
 ---
 
-## 7. Kalau ada masalah
+## 7. Membaca kartu "Perlu perhatian"
+
+Di halaman **Pesanan** ada lima kartu tambahan. Angkanya mengikuti filter
+tanggal yang sedang dipilih, kecuali tiga kartu keterlambatan (dihitung dari
+tenggat kirim terhadap hari ini).
+
+| Kartu | Artinya | Yang dilakukan |
+|---|---|---|
+| **Pembatalan Diajukan** | Pembeli minta batal (`IN_CANCEL`), belum final | **Tanggapi hari itu juga.** Owner bisa menekan "Setujui pembatalan" di kartu pesanan (tercatat sebagai penjual, stok otomatis dilepas). Kalau dibiarkan lewat tenggat, Shopee menyetujuinya sendiri. |
+| **Batal oleh Sistem** | Shopee membatalkan otomatis, mis. "Seller did not Ship" | Tidak ada yang bisa diproses; ini catatan keterlambatan yang sudah terjadi |
+| **Terlambat** | Tenggat kirim sudah lewat, paket belum diserahkan | Kirim hari ini atau batalkan sendiri supaya tidak dibatalkan sistem |
+| **Besok Batal** | Belum ada resi, tenggat ≤ 24 jam | Prioritas tertinggi: ambil resi sekarang |
+| **Beresiko Terlambat** | Resi sudah ada, menunggu penjemputan kurir | Pastikan kurir menjemput sebelum tenggat |
+
+Catatan penting: pesanan yang **paketnya sudah dijemput kurir / dalam
+perjalanan** tidak akan pernah muncul di antrean kerja. Kalau resinya dipindai,
+aplikasi menjawab "paket sudah dalam perjalanan" dan **tidak** mengurangi stok.
+
+## 8. Kalau ada masalah
 
 | Yang terlihat | Artinya | Yang dilakukan |
 |---|---|---|

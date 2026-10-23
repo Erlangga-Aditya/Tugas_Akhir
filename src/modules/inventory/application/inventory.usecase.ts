@@ -45,8 +45,15 @@ export const AdjustStockSchema = z.object({
   variantId: z.string().min(1),
   /** Angka stok fisik hasil hitung. Boleh 0 (barang habis). */
   countedOnHand: z.number().int().min(0, 'Stok hasil hitung tidak boleh negatif.'),
-  /** Stok sistem saat form dibuka; dipakai sebagai pengaman versi. */
-  expectedOnHand: z.number().int().min(0),
+  /**
+   * Stok sistem saat form dibuka; dipakai sebagai pengaman versi.
+   *
+   * Tidak dibatasi >= 0: saldo sistem BISA negatif (barang sudah dikirim sebelum
+   * pernah dipacking, atau stok awal belum diisi). Menolak angka negatif membuat
+   * koreksi "dari minus ke 0" mustahil, dan itulah kasus yang paling sering
+   * terjadi saat mulai memakai aplikasi.
+   */
+  expectedOnHand: z.number().int(),
   reason: z.enum(ADJUSTMENT_REASONS),
   notes: z.string().max(500).optional(),
 });
@@ -310,6 +317,57 @@ export async function receiveStock(
  * Requires a reason code (audit trail).
  * FR-INV-005
  */
+/**
+ * Mengosongkan SELURUH stok fisik menjadi 0 (keputusan pemilik toko).
+ *
+ * Dipakai saat mulai memakai aplikasi: angka lama (termasuk yang minus akibat
+ * pengurangan pesanan yang sudah dikirim) tidak dipertahankan, lalu owner
+ * mengisi sendiri angka fisik yang sebenarnya.
+ *
+ * Setiap varian tetap melewati `adjustStock` — bukan UPDATE massal — supaya
+ * ada baris ledger, audit, dan aktor untuk tiap perubahan. Tanpa itu angka
+ * stok berubah tanpa jejak, dan itu tidak bisa dipertanggungjawabkan.
+ */
+export async function resetAllStockToZero(
+  tenantId: string,
+  actorId: string,
+  notes = 'Kosongkan stok awal oleh owner',
+): Promise<{ varian: number; unitDisesuaikan: number }> {
+  const balances = await prisma.inventoryBalance.findMany({
+    where: { warehouse: { tenantId }, onHand: { not: 0 } },
+    select: { warehouseId: true, variantId: true, onHand: true },
+    orderBy: { variantId: 'asc' },
+  });
+
+  let unitDisesuaikan = 0;
+  for (const b of balances) {
+    await adjustStock(
+      tenantId,
+      {
+        warehouseId: b.warehouseId,
+        variantId: b.variantId,
+        countedOnHand: 0,
+        expectedOnHand: b.onHand,
+        reason: 'STOCK_COUNT',
+        notes,
+      },
+      actorId,
+    );
+    unitDisesuaikan += Math.abs(b.onHand);
+  }
+
+  await auditLog({
+    tenantId,
+    actorId,
+    action: 'stock_reset_all',
+    entityType: 'Inventory',
+    entityId: tenantId,
+    metadata: { varian: balances.length, unitDisesuaikan },
+  });
+
+  return { varian: balances.length, unitDisesuaikan };
+}
+
 export async function adjustStock(
   tenantId: string,
   input: AdjustStockInput,

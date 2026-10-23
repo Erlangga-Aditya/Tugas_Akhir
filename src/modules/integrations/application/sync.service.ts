@@ -6,6 +6,11 @@ import { ShopeeAdapter } from '../infrastructure/shopee.adapter';
 import { encryptSecret, decryptSecret } from '../infrastructure/crypto.service';
 import { importOrder } from '@/modules/orders/application/order.usecase';
 import { processOrderForFulfillment } from '@/modules/fulfillment/application/fulfillment.usecase';
+import {
+  markFulfillmentOrdersException,
+  releaseReservationsForOrder,
+} from '@/modules/inventory/application/inventory.usecase';
+import { checkCancelApproval, type CancelApprovalRole } from '@/modules/orders/domain/cancellation';
 import { NotFoundError, ExternalIntegrationError } from '@/shared/errors/AppError';
 import { auditLog } from '@/modules/audit/application/auditLog.service';
 import { logger } from '@/shared/observability/logger';
@@ -1851,6 +1856,29 @@ async function handleOrderStatusPush(
         },
       });
     });
+    // Pesanan batal via webhook: baris fulfillment yang masih "menunggu stok"
+    // ikut ditutup dan reservasi stoknya dilepas. Tanpa ini, pesanan yang
+    // dibatalkan Shopee tetap dihitung sebagai pekerjaan gudang — angka
+    // "menunggu stok" membengkak palsu dan muncul di daftar produksi dengan
+    // tenggat yang sudah lewat (seperti yang ditemukan di produksi: 5 pesanan
+    // CANCELLED masih berstatus WAITING_STOCK).
+    //
+    // Idempoten: kedua fungsi hanya menyentuh baris yang masih aktif, jadi
+    // aman bila Shopee mengirim CANCELLED berulang kali.
+    if (status === 'CANCELLED' && order.status !== 'CANCELLED') {
+      try {
+        await releaseReservationsForOrder(
+          tenantId,
+          order.id,
+          null,
+          'Pesanan dibatalkan di Shopee (webhook)',
+        );
+        await markFulfillmentOrdersException(tenantId, order.id);
+      } catch (e) {
+        logger.warn(`Gagal membersihkan fulfillment pesanan batal ${orderSn}: ${(e as Error).message}`);
+      }
+    }
+
     logger.info(`Order ${orderSn} status diupdate via webhook: ${order.status} → ${status}`);
     broadcastSystemEvent('order:updated', {
       tenantId,
@@ -2132,6 +2160,104 @@ export async function getLastRunsByOperation(tenantId: string, shopId?: string) 
 }
 
 /** Connect Shopee by storing (encrypted) seller tokens + setting the external shop id. */
+/**
+ * Menyetujui pembatalan yang diajukan pembeli (`IN_CANCEL` → `CANCELLED`).
+ *
+ * Urutan yang dijaga:
+ *  1. Aturan domain diperiksa LEBIH DULU (owner, masih pengajuan, paket belum jalan).
+ *  2. Shopee dipanggil; kalau ditolak, pesan aslinya diteruskan dan TIDAK ada
+ *     perubahan lokal (tidak boleh mengaku batal kalau Shopee menolak).
+ *  3. Baru setelah Shopee menerima: status lokal diperbarui, reservasi stok
+ *     dilepas (supaya unit tidak tertahan selamanya), audit ditulis.
+ */
+export async function approveBuyerCancellationForOrder(
+  tenantId: string,
+  orderId: string,
+  actorId: string,
+  role: CancelApprovalRole,
+): Promise<{ ok: boolean; message: string }> {
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, tenantId },
+    select: {
+      id: true,
+      externalOrderId: true,
+      status: true,
+      externalStatus: true,
+      shopId: true,
+      shipments: { orderBy: { createdAt: 'desc' }, take: 1, select: { status: true } },
+    },
+  });
+  if (!order) throw new NotFoundError('Pesanan', orderId);
+
+  const cek = checkCancelApproval({
+    role,
+    externalStatus: order.externalStatus,
+    orderStatus: order.status,
+    shipmentStatus: order.shipments[0]?.status ?? null,
+  });
+  if (!cek.ok) return { ok: false, message: cek.message };
+
+  const { conn, creds } = await loadConnection(tenantId, order.shopId);
+  const fresh = await ensureFreshToken(conn.id, creds);
+  const hasil = await shopee.cancelOrder(buildShopCredentials(fresh), {
+    orderSn: order.externalOrderId,
+  });
+
+  if (!hasil.ok) {
+    logger.warn(
+      `Pembatalan ${order.externalOrderId} ditolak Shopee: ${hasil.message || '(tanpa pesan)'}`,
+      { orderId },
+    );
+    return {
+      ok: false,
+      message: hasil.message
+        ? `Shopee menolak pembatalan: ${hasil.message}`
+        : 'Shopee menolak pembatalan tanpa alasan yang bisa dibaca. Periksa di Seller Centre.',
+    };
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.order.update({
+      where: { id: order.id },
+      data: {
+        status: 'CANCELLED',
+        externalStatus: 'CANCELLED',
+        cancelBy: 'seller',
+        cancelledAt: new Date(),
+      },
+    });
+    await tx.orderStatusHistory.create({
+      data: {
+        orderId: order.id,
+        fromStatus: order.status,
+        toStatus: 'CANCELLED',
+        reason: 'Pembatalan diajukan pembeli, disetujui owner',
+      },
+    });
+  });
+
+  // Stok yang sempat ditahan pesanan ini harus dilepas, kalau tidak unit itu
+  // "hilang" dari perhitungan tersedia selamanya.
+  await releaseReservationsForOrder(
+    tenantId,
+    order.id,
+    actorId,
+    'Pembatalan disetujui owner — stok yang ditahan dilepas',
+  );
+
+  await auditLog({
+    tenantId,
+    actorId,
+    action: 'buyer_cancellation_approved',
+    entityType: 'Order',
+    entityId: order.id,
+    metadata: { externalOrderId: order.externalOrderId, via: 'owner' },
+  });
+
+  logger.info(`Pembatalan disetujui owner: ${order.externalOrderId}`, { orderId });
+  return { ok: true, message: `Pembatalan pesanan ${order.externalOrderId} disetujui dan stoknya dilepas.` };
+}
+
 export async function connectShopee(
   tenantId: string,
   shopId: string,
