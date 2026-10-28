@@ -90,9 +90,21 @@ describe('Sync Service Status Mappings', () => {
       expect(mapLogisticsStatus('LOGISTICS_DELIVERY_DONE')).toBe('DELIVERED');
       expect(mapLogisticsStatus('COMPLETED')).toBe('DELIVERED');
       expect(mapLogisticsStatus('LOGISTICS_DELIVERY_FAILED')).toBe('FAILED');
-      expect(mapLogisticsStatus('CANCELLED')).toBe('FAILED');
       expect(mapLogisticsStatus('TO_RETURN')).toBe('RETURNED');
       expect(mapLogisticsStatus('RETURNED')).toBe('RETURNED');
+    });
+
+    it('pembatalan BUKAN kegagalan kurir', () => {
+      // Test lama di sini berbunyi `expect(mapLogisticsStatus('CANCELLED')).toBe('FAILED')`,
+      // dan justru itulah bug yang dilaporkan pemilik toko: pesanan batal muncul
+      // sebagai "Gagal kirim" di Lacak Kiriman. Status pesanan `CANCELLED`
+      // dianggap sebagai status paket `FAILED`, padahal paketnya tidak pernah
+      // diserahkan ke kurir. Assertion-nya diperbaiki, bukan pemetaannya.
+      expect(mapLogisticsStatus('CANCELLED')).toBe('CANCELLED');
+      expect(mapLogisticsStatus('CANCELLED')).not.toBe('FAILED');
+      // Kegagalan yang NYATA tetap FAILED — jangan ikut dilunakkan.
+      expect(mapLogisticsStatus('LOGISTICS_PICKUP_FAILED')).toBe('FAILED');
+      expect(mapLogisticsStatus('LOGISTICS_LOST')).toBe('FAILED');
     });
   });
 });

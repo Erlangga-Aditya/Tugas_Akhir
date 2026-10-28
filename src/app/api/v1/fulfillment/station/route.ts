@@ -3,6 +3,7 @@ import { getFulfillmentStation } from '@/modules/fulfillment/application/fulfill
 import { isQueueBucket } from '@/modules/fulfillment/domain/work-queue';
 import { isExceptionKategori } from '@/modules/fulfillment/domain/order-exceptions';
 import { isRangePreset, resolveRangePreset } from '@/modules/fulfillment/domain/date-range';
+import { isTahapOperasional } from '@/modules/reports/domain/operation-metrics';
 import { successResponse, handleRouteError } from '@/shared/application/apiResponse';
 import {
   getAuthContext,
@@ -23,6 +24,7 @@ export const dynamic = 'force-dynamic';
  * Parameter:
  *   ?range=today|yesterday|last7|last30|all   (default: all)
  *   ?bucket=baru|sudahResi|perluDiproses|semua (default: perluDiproses)
+ *   ?tahap=perluProduksi|siapDiambil|sedangDipacking|siapDiserahkan|sudahDiserahkan|diterimaShopee
  *   ?sort=oldest|newest
  *   ?search=<nomor pesanan | nomor resi | nama pembeli | SKU>
  *   ?page=1&pageSize=20
@@ -45,6 +47,7 @@ export async function GET(request: NextRequest) {
     const preset = isRangePreset(rangeParam) ? rangeParam : 'all';
     const bucketParam = getQueryParam(request, 'bucket');
     const kategoriParam = getQueryParam(request, 'kategori');
+    const tahapParam = getQueryParam(request, 'tahap');
     const bucket = isQueueBucket(bucketParam) ? bucketParam : 'perluDiproses';
 
     const station = await getFulfillmentStation(ctx.tenantId, {
@@ -53,6 +56,7 @@ export async function GET(request: NextRequest) {
       range: resolveRangePreset(preset, new Date()),
       search: getQueryParam(request, 'search'),
       ...(isExceptionKategori(kategoriParam) ? { kategori: kategoriParam } : {}),
+      ...(isTahapOperasional(tahapParam) ? { tahap: tahapParam } : {}),
       page,
       pageSize,
     });

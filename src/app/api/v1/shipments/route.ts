@@ -6,9 +6,14 @@ import {
   getRequestId,
   parsePagination,
   getQueryParam,
+  getEnumQueryParam,
   assertPermission,
 } from '@/shared/application/routeHelpers';
-import type { ShipmentStatus } from '@prisma/client';
+import { ShipmentStatus } from '@prisma/client';
+
+/** Nilai `?status=` yang sah — diambil dari enum Prisma supaya tidak pernah
+ *  menyimpang dari schema. */
+const SHIPMENT_STATUSES = Object.values(ShipmentStatus);
 
 export async function GET(request: NextRequest) {
   const requestId = getRequestId(request);
@@ -19,7 +24,10 @@ export async function GET(request: NextRequest) {
     const result = await listShipments(ctx.tenantId, {
       search: getQueryParam(request, 'search'),
       carrier: getQueryParam(request, 'carrier'),
-      status: getQueryParam(request, 'status') as ShipmentStatus | undefined,
+      // Nilai tak dikenal (mis. `?status=ALL` dari tautan lama) diabaikan,
+      // bukan diteruskan ke Prisma — kalau diteruskan, query gagal dan endpoint
+      // membalas daftar kosong yang terlihat seperti data hilang.
+      status: getEnumQueryParam(request, 'status', SHIPMENT_STATUSES),
       page, pageSize,
     });
     return successResponse(result, { requestId });

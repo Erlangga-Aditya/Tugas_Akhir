@@ -75,6 +75,8 @@ export interface StationResponse {
   warehouse: { id: string; name: string; code: string } | null;
   sort: 'oldest' | 'newest';
   bucket: 'semua' | 'baru' | 'sudahResi' | 'perluDiproses';
+  /** Saringan tahap gudang aktif (bukti klik kartu operasional); null = tidak menyaring. */
+  tahap: string | null;
   rangePreset: 'today' | 'yesterday' | 'last7' | 'last30' | 'all';
   /** Batas rentang yang benar-benar dipakai server (ISO, null = tanpa batas). */
   range: { from: string | null; to: string | null };

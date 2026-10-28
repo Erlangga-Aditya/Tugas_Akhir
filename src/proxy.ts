@@ -145,6 +145,16 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next({ request: { headers } });
   }
 
+  // Konsol Shopee hanya menerima Redirect URL berupa domain utama ("/"), jadi
+  // hasil otorisasi mendarat di akar domain dengan ?code=...&shop_id=....
+  // Teruskan utuh ke endpoint callback — tanpa ini, kode otorisasi hilang di
+  // halaman depan dan koneksi toko tidak pernah tersimpan.
+  if (pathname === '/' && request.nextUrl.searchParams.has('code')) {
+    const url = request.nextUrl.clone();
+    url.pathname = '/api/v1/integrations/shopee/callback';
+    return NextResponse.redirect(url);
+  }
+
   // Akar domain: pengguna yang sudah punya sesi tidak perlu melihat halaman
   // login lagi.
   if (pathname === '/') {

@@ -14,6 +14,7 @@
 export type ParcelPhase =
   | 'BELUM_DIKIRIM' // belum ada pengiriman sama sekali
   | 'MENUNGGU_KURIR' // resi terbit, paket masih di gudang
+  | 'DIBATALKAN' // pesanan batal sebelum paket dijemput — paket tidak pernah ada
   | 'DALAM_PERJALANAN' // sudah dijemput kurir / sedang menuju pembeli
   | 'DITERIMA' // sudah diterima pembeli
   | 'GAGAL' // gagal kirim, paket dalam proses kembali
@@ -22,6 +23,7 @@ export type ParcelPhase =
 export const PARCEL_PHASE_LABEL: Record<ParcelPhase, string> = {
   BELUM_DIKIRIM: 'Belum ada pengiriman',
   MENUNGGU_KURIR: 'Menunggu dijemput kurir',
+  DIBATALKAN: 'Pesanan dibatalkan — paket tidak dikirim',
   DALAM_PERJALANAN: 'Dalam perjalanan',
   DITERIMA: 'Diterima pembeli',
   GAGAL: 'Gagal kirim',
@@ -40,6 +42,11 @@ export function resolveParcelPhase(shipmentStatus: string | null | undefined): P
       return 'DALAM_PERJALANAN';
     case 'DELIVERED':
       return 'DITERIMA';
+    case 'CANCELLED':
+      // Pesanan batal sebelum paket dijemput: tidak pernah ada paket, jadi
+      // BUKAN "gagal kirim". Dulu status paket ini tidak ada, sehingga
+      // pembatalan ditulis sebagai FAILED dan tampil sebagai kegagalan kurir.
+      return 'DIBATALKAN';
     case 'FAILED':
       return 'GAGAL';
     case 'RETURNED':
@@ -57,7 +64,13 @@ export function parcelAlreadyLeft(phase: ParcelPhase): boolean {
   return phase === 'DALAM_PERJALANAN' || phase === 'DITERIMA' || phase === 'GAGAL' || phase === 'DIKEMBALIKAN';
 }
 
-/** Fase yang menuntut penutupan catatan fulfillment (paket jalan, catatan tertinggal). */
+/**
+ * Fase yang menuntut penutupan catatan fulfillment (paket jalan, catatan tertinggal).
+ *
+ * `DIBATALKAN` sengaja TIDAK termasuk: pembatalan ditutup lewat jalur
+ * pembatalan (`markFulfillmentOrdersException` + pelepasan reservasi), bukan
+ * lewat rekonsiliasi paket yang sudah jalan.
+ */
 export function needsReconcile(phase: ParcelPhase): boolean {
   return parcelAlreadyLeft(phase);
 }

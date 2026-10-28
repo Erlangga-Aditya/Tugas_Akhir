@@ -13,7 +13,7 @@ sisa pekerjaan. Dokumen lain di repo:
 Selain itu **tidak ada** dokumen lain. Kalau ada informasi baru, tambahkan ke
 salah satu dari empat berkas di atas — jangan membuat berkas baru.
 
-Terakhir diperbarui: 2026-10-20.
+Terakhir diperbarui: 2026-10-28.
 
 ---
 
@@ -51,7 +51,7 @@ Prinsip yang tidak boleh dilanggar:
 | Badge menu = kartu Perlu Diproses | 29 = 29 |
 | Layout ponsel 360/393/414 px | 11 halaman × 3 lebar: 0 geser mendatar |
 | Tema terang/gelap | token CSS + `data-theme`, kontras AA |
-| Gate | `tsc` 0 · `lint` 0 · **377 test lulus** · build OK |
+| Gate | `tsc` 0 · `lint` 0 (0 warning) · **421 test lulus** · build OK |
 | Stok | dikosongkan oleh owner: 23 varian / 132 unit → semua 35 varian = 0 |
 | Produksi | halaman Produksi + PDF nama pendek, bisa pilih pesanan |
 | VPS | `efulfill:online`, `health 200`, schema up to date, disk 10% |
@@ -242,6 +242,76 @@ cetak lembar produksi** (lihat Fase 5).
       `orders: COMPLETED, recordsWritten=0` — 23 pesanan tersisa memang masih CONFIRMED
       menurut API Shopee; 5 di antaranya sudah lewat `shipByAt` = isi section (prioritas
       pertama tim produksi).
+
+### Fase 8 — Pesanan batal, Lacak Kiriman, dan antrean kerja otomatis (selesai & teruji)
+
+Delapan cycle dikerjakan berurutan, tiap cycle ditutup dengan validasi sebelum
+lanjut ke cycle berikutnya.
+
+- [x] **Cycle 1 — Ringkasan operasional tanpa kartu "gagal".**
+      `operation-metrics.ts` tidak lagi menjadikan `EXCEPTION` sebagai kartu
+      kegagalan, dan `hitungTahap` dijaga terhadap status tak dikenal.
+      11 test domain.
+- [x] **Cycle 2 — Kejadian Shopee memakai tanggal stabil.**
+      `operations.usecase.ts` menghitung "diterima kurir Shopee" dari
+      `handedOverAt`/`packedAt`, bukan dari tanggal pesanan — angka tidak lagi
+      bergeser saat rentang tanggal diganti.
+- [x] **Cycle 3 — Station API menerima `?tahap=`.**
+      Klik kartu ringkasan menyaring daftar; nilai tak dikenal diabaikan ke
+      default yang aman, bukan diteruskan.
+- [x] **Cycle 4 — Halaman Pesanan dirapikan.** Kartu antrean di atas, ringkasan
+      operasional di bawahnya dan mengikuti filter halaman, kartu dapat diklik,
+      kelompok Shopee vs aplikasi dipisah. Section yatim di halaman Laporan
+      dihapus (193 baris) beserta bug JSX tombol-dalam-tombol.
+      Bukti: tsc 0, 400 test.
+- [x] **Cycle 5 — Pesanan batal bukan "Gagal kirim".** Akar masalah di data:
+      `mapLogisticsStatus()` dipakai untuk status pesanan *dan* status paket,
+      sehingga `CANCELLED` ditulis sebagai `FAILED`.
+      - enum `ShipmentStatus.CANCELLED` (migrasi `20261028090000`, aditif)
+      - `shipping/domain/shipment-status.ts`: `mapOrderStatusToShipment` +
+        `shouldAdvanceShipmentStatus` (satu sumber aturan)
+      - sinkronisasi, webhook, scan resi, dan badge kartu memakai pemetaan itu;
+        AWB yang datang setelah pembatalan tidak membuat pengiriman baru
+      - migrasi memperbaiki data lama **hanya** untuk paket tanpa jejak
+        `PICKED_UP`/`IN_TRANSIT`/`DELIVERED`
+      - UI: chip `Gagal Kirim` / `Dikembalikan` / `Dibatalkan` dipisah — `FAILED`
+        sebelumnya tidak bisa disaring sama sekali
+      - Bukti E2E DB nyata: 1 baris diperbaiki, paket berjejak tetap `FAILED`,
+        dijalankan ulang = 0 baris
+- [x] **Cycle 6 — Catatan fulfillment otomatis.** Dulu hanya untuk pesanan yang
+      baru diimpor (`result.created`), sehingga pesanan lama yang baru menjadi
+      siap kerja (mis. `UNPAID` → `READY_TO_SHIP`) tidak pernah masuk antrean
+      kerja maupun daftar produksi.
+      - domain `fulfillment-gate.ts` (7 test) + `ensureFulfillmentForOrder()`
+      - dipanggil sinkronisasi **dan** webhook saat status menjadi `CONFIRMED`
+      - idempoten; sengaja tidak membuat catatan untuk pesanan batal, belum
+        dibayar, paket yang sudah keluar gudang, atau catatan yang sudah ada
+      - Bukti E2E DB nyata: 5 skenario lulus (dibuat, idempoten, batal, in-transit,
+        unpaid)
+- [x] **Cycle 7 — Gate penuh.** `tsc` 0 error · `lint` 0 error 0 warning ·
+      **421 test lulus** (naik dari 396 di awal) · `build` OK.
+      Catatan: halaman Laporan memakai `LoadingState`/`ErrorState` yang selama ini
+      diimpor tetapi tidak pernah dirender — kegagalan API tampil sebagai tabel
+      kosong tanpa penjelasan.
+- [x] **Cycle 8 — Dokumentasi.** `deploy/RUNBOOK-OPERASIONAL.md` §8–§9 (gejala,
+      akar, cara memeriksa di VPS, batas perbaikan data) dan bagian ini.
+- [x] **Deploy produksi + verifikasi angka nyata** (2026-10-28).
+      `DEPLOY_OK`, `HEALTH=200`, schema *up to date*.
+      Angka produksi saat verifikasi:
+      - paket milik pesanan dibatalkan: **47 `CANCELLED`**, sisa `FAILED` tanpa
+        jejak perjalanan: **0**
+      - `?status=CANCELLED` = 47 · `?status=RETURNED` = 2 · `?status=FAILED` = 0
+      - pesanan siap kerja tanpa catatan fulfillment: **0**
+      - kartu antrean: `perluDiproses 23 (baru 16 + sudahResi 7)`; filter tahap
+        `perluProduksi` = 23 (sama dengan kartu)
+      - halaman Lacak Kiriman: HTTP 200, chip `Gagal Kirim` / `Dikembalikan` /
+        `Dibatalkan` tampil, 0 error React
+- [x] **Perbaikan susulan: `?status=ALL` membalas kosong.** Ditemukan justru
+      saat verifikasi produksi (191 kiriman, tapi `status=ALL` → 0). Penyebabnya
+      cast TypeScript `as ShipmentStatus` yang tidak berlaku saat berjalan,
+      sehingga nilai asing sampai ke Prisma. `getEnumQueryParam()` sekarang
+      dipakai `/api/v1/shipments`, `/api/v1/returns`, `/api/v1/orders`.
+      Terverifikasi di produksi: `status=ALL` = 191 = tanpa filter.
 
 ## 6. Aturan kerja (untuk agen & editor)
 

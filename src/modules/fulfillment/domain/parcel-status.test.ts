@@ -10,6 +10,8 @@ describe('fase paket', () => {
     ['DELIVERED', 'DITERIMA'],
     ['FAILED', 'GAGAL'],
     ['RETURNED', 'DIKEMBALIKAN'],
+    // Pesanan batal: paket tidak pernah dikirim, jadi BUKAN "gagal kirim".
+    ['CANCELLED', 'DIBATALKAN'],
     [null, 'BELUM_DIKIRIM'],
     [undefined, 'BELUM_DIKIRIM'],
     ['STATUS_ASING', 'BELUM_DIKIRIM'],

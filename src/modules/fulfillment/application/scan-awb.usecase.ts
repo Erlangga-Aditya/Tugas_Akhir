@@ -256,6 +256,18 @@ export async function scanAwbForPacking(
     );
   }
 
+  // Pengiriman dibatalkan, tetapi status pesanannya belum ikut batal (mis. data
+  // lama). Paketnya tidak pernah ada, jadi jangan sampai masuk jalur packing dan
+  // memotong stok.
+  if (fasePaket === 'DIBATALKAN') {
+    return emptyOutcome(
+      'CANCELLED',
+      `Pengiriman pesanan ${order.externalOrderId} sudah dibatalkan, jadi paketnya tidak pernah dikirim. ` +
+        'Pastikan status pesanan di Shopee; stok gudang tidak dikurangi.',
+      { order: summary },
+    );
+  }
+
   // Sudah diterima pembeli / pesanan tuntas: tidak ada langkah kerja tersisa.
   if (order.status === 'COMPLETED' || fasePaket === 'DITERIMA') {
     return emptyOutcome(

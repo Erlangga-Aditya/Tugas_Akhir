@@ -8,7 +8,7 @@ Jalankan:
 import os
 import paramiko
 
-HOST = os.environ.get("VPS_HOST", "103.178.174.224")
+HOST = os.environ.get("VPS_HOST", "45.126.43.98")
 USER = os.environ.get("VPS_USER", "root")
 PASSWORD = os.environ.get("SSHPASS")
 
@@ -42,7 +42,7 @@ STEPS: list[tuple[str, str]] = [
      "grep -rl 'zxing\\|BrowserMultiFormatReader' /opt/efulfill/app/.next/static 2>/dev/null | head -3 | sed 's|/opt/efulfill/app/||' ; "
      "echo \"potongan berkas: $(grep -rl 'zxing' /opt/efulfill/app/.next/static 2>/dev/null | wc -l)\""),
     ("HTTPS & SERTIFIKAT",
-     "curl -s -o /dev/null -w 'https=%{http_code} ssl_verify=%{ssl_verify_result}\\n' https://103-178-174-224.sslip.io/login"),
+     "curl -s -o /dev/null -w 'https=%{http_code} ssl_verify=%{ssl_verify_result}\\n' https://maktabah313.web.id/login"),
     ("WEBHOOK: percobaan masuk",
      "grep -icE 'webhook' /root/.pm2/logs/efulfill-out.log 2>/dev/null | sed 's/^/baris webhook: /'"),
 ]

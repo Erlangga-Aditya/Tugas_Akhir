@@ -31,6 +31,8 @@ import {
   resolveLateRisk,
   type ExceptionKategori,
 } from '../domain/order-exceptions';
+import { tahapDariStatus, type TahapOperasional } from '@/modules/reports/domain/operation-metrics';
+import { shouldCreateFulfillmentRecord } from '../domain/fulfillment-gate';
 
 /** Item yang stoknya belum cukup untuk sebuah pesanan. */
 export interface StockShortfall {
@@ -178,6 +180,70 @@ export async function processOrderForFulfillment(
   });
 
   return { fulfillmentOrderId: fo.id, success: failedSkus.length === 0, failedSkus };
+}
+
+/**
+ * Pastikan sebuah pesanan punya catatan fulfillment bila memang sudah siap
+ * dikerjakan gudang.
+ *
+ * Dipakai oleh sinkronisasi pesanan dan webhook status. Versi lama hanya
+ * membuat catatan untuk pesanan yang BARU diimpor, sehingga pesanan yang sudah
+ * ada lalu berubah menjadi siap dikerjakan (mis. `UNPAID` → `READY_TO_SHIP`
+ * setelah dibayar) tidak pernah masuk antrean kerja maupun daftar produksi.
+ *
+ * Aman dipanggil berulang: `processOrderForFulfillment` sudah idempoten
+ * (kunci baris pesanan + periksa catatan aktif dalam satu transaksi).
+ */
+export async function ensureFulfillmentForOrder(
+  tenantId: string,
+  orderId: string,
+  actorId: string,
+): Promise<{ created: boolean; reason: string; fulfillmentOrderId: string | null }> {
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, tenantId },
+    select: {
+      id: true,
+      status: true,
+      fulfillmentOrders: {
+        where: { status: { notIn: ['COMPLETED', 'EXCEPTION'] } },
+        select: { id: true },
+        take: 1,
+      },
+      shipments: { orderBy: { createdAt: 'desc' }, take: 1, select: { status: true } },
+    },
+  });
+  if (!order) return { created: false, reason: 'Pesanan tidak ditemukan.', fulfillmentOrderId: null };
+
+  const gate = shouldCreateFulfillmentRecord({
+    orderStatus: order.status,
+    shipmentStatus: order.shipments[0]?.status ?? null,
+    hasActiveFulfillment: order.fulfillmentOrders.length > 0,
+  });
+  if (!gate.shouldCreate) {
+    return {
+      created: false,
+      reason: gate.reason,
+      fulfillmentOrderId: order.fulfillmentOrders[0]?.id ?? null,
+    };
+  }
+
+  // Gudang default = gudang aktif tertua, sama dengan yang dipakai halaman
+  // pesanan. Tidak ada gudang aktif berarti tidak ada tempat menyimpan barang.
+  const warehouse = await prisma.warehouse.findFirst({
+    where: { tenantId, status: 'ACTIVE' },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true },
+  });
+  if (!warehouse) {
+    return { created: false, reason: 'Belum ada gudang aktif.', fulfillmentOrderId: null };
+  }
+
+  const hasil = await processOrderForFulfillment(tenantId, orderId, warehouse.id, actorId);
+  return {
+    created: true,
+    reason: hasil.failedSkus.length > 0 ? `Menunggu stok: ${hasil.failedSkus.join(', ')}` : 'Catatan fulfillment dibuat.',
+    fulfillmentOrderId: hasil.fulfillmentOrderId,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -934,6 +1000,13 @@ export async function getFulfillmentStation(
      * batal oleh sistem, atau pesanan yang terlambat/berisiko terlambat.
      */
     kategori?: ExceptionKategori;
+    /**
+     * Bukti kartu operasional: saring ke pesanan pada satu tahap gudang
+     * (mis. klik kartu "Perlu Produksi" → daftar hanya pesanan itu).
+     * Memakai pemetaan yang SAMA dengan kartu (`tahapDariStatus`), sehingga
+     * isi daftar dijamin cocok dengan angka kartunya.
+     */
+    tahap?: TahapOperasional;
     page?: number;
     pageSize?: number;
   } = {},
@@ -1260,7 +1333,13 @@ export async function getFulfillmentStation(
     bucket === 'semua'
       ? unified
       : withQueue.filter((item) => belongsToBucket(bucket, item.queue)).map((item) => item.order)
-  ).filter(cocokKategori);
+  )
+    .filter(cocokKategori)
+    // Bukti kartu operasional: pemetaan tahap SAMA dengan yang dipakai kartu
+    // (`tahapDariStatus`), jadi isi daftar selalu cocok dengan angka kartunya.
+    // Pesanan tanpa catatan fulfillment (tahap null) tidak cocok dengan tahap
+    // mana pun — itu memang belum masuk antrean kerja gudang.
+    .filter((o) => (options.tahap ? tahapDariStatus(String(o.fulfillmentStatus ?? '')) === options.tahap : true));
 
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -1274,6 +1353,8 @@ export async function getFulfillmentStation(
     warehouse,
     sort: options.sort ?? 'oldest',
     bucket,
+    /** Tahap aktif (bukti kartu operasional) — null bila tidak menyaring tahap. */
+    tahap: options.tahap ?? null,
     range: {
       from: range.from ? range.from.toISOString() : null,
       to: range.to ? range.to.toISOString() : null,

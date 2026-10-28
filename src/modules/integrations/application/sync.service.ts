@@ -5,7 +5,7 @@ import { prisma } from '@/shared/infrastructure/prisma';
 import { ShopeeAdapter } from '../infrastructure/shopee.adapter';
 import { encryptSecret, decryptSecret } from '../infrastructure/crypto.service';
 import { importOrder } from '@/modules/orders/application/order.usecase';
-import { processOrderForFulfillment } from '@/modules/fulfillment/application/fulfillment.usecase';
+import { ensureFulfillmentForOrder } from '@/modules/fulfillment/application/fulfillment.usecase';
 import {
   markFulfillmentOrdersException,
   releaseReservationsForOrder,
@@ -18,6 +18,7 @@ import type { ShopCredentials, ArrangeShipmentInput, SyncOptions } from '../doma
 import { broadcastSystemEvent } from '@/lib/sse';
 import { getShopeeAppConfig } from './appConfig.service';
 import { computePlatformFee, toAmount } from '../domain/escrow-fee-mapping';
+import { mapOrderStatusToShipment, shouldAdvanceShipmentStatus } from '@/modules/shipping/domain/shipment-status';
 
 const shopee = new ShopeeAdapter();
 
@@ -465,12 +466,15 @@ export async function triggerOrderSync(
         select: { id: true, status: true },
       });
       if (pengirimanLama) {
-        const statusDariPesanan = mapLogisticsStatus(mOrder.rawStatus);
+        // `mOrder.rawStatus` = status PESANAN, jadi memakai pemetaan pesanan →
+        // paket (bukan pemetaan status logistik).
+        const statusDariPesanan = mapOrderStatusToShipment(mOrder.rawStatus);
         // Hanya bertindak bila statusnya MEMANG berbeda. Tanpa syarat ini,
         // pesanan yang sudah gagal akan ditulis ulang setiap putaran tanpa
         // perubahan apa pun - dan log kenaikan terisi baris "FAILED -> FAILED"
         // yang membuat pemeriksaan produksi jadi menyesatkan.
         if (
+          statusDariPesanan !== null &&
           statusDariPesanan !== pengirimanLama.status &&
           shouldAdvanceShipmentStatus(pengirimanLama.status, statusDariPesanan)
         ) {
@@ -479,7 +483,10 @@ export async function triggerOrderSync(
             data: {
               status: statusDariPesanan,
               ...(statusDariPesanan === 'DELIVERED' ? { deliveredAt: new Date() } : {}),
-              ...(statusDariPesanan !== 'PENDING' && statusDariPesanan !== 'READY_TO_SHIP'
+              // Paket batal tidak pernah berangkat, jadi tidak punya waktu kirim.
+              ...(statusDariPesanan !== 'PENDING' &&
+              statusDariPesanan !== 'READY_TO_SHIP' &&
+              statusDariPesanan !== 'CANCELLED'
                 ? { shippedAt: new Date() }
                 : {}),
             },
@@ -493,10 +500,24 @@ export async function triggerOrderSync(
         }
       }
 
-      // Auto-process newly imported CONFIRMED orders
-      if (result.created && warehouse && mapShopeeStatusToInternal(mOrder.rawStatus) === 'CONFIRMED') {
+      // Buat catatan fulfillment bila pesanan siap dikerjakan.
+      //
+      // Dulu syaratnya `result.created` — hanya pesanan yang baru diimpor.
+      // Akibatnya pesanan yang sudah ada lalu berubah menjadi siap kerja
+      // (mis. UNPAID menjadi READY_TO_SHIP setelah pembeli membayar) tidak
+      // pernah masuk antrean kerja maupun daftar produksi, sampai seseorang
+      // menekan "Proses ke Fulfillment" secara manual.
+      //
+      // `ensureFulfillmentForOrder` memutuskan sendiri lewat domain
+      // `shouldCreateFulfillmentRecord` (batalkan? paket sudah jalan? sudah ada
+      // catatan?) dan idempoten, jadi aman dipanggil setiap putaran.
+      if (warehouse && mapShopeeStatusToInternal(mOrder.rawStatus) === 'CONFIRMED') {
         try {
-          await processOrderForFulfillment(tenantId, result.orderId, warehouse.id, actorId);
+          const hasil = await ensureFulfillmentForOrder(tenantId, result.orderId, actorId);
+          if (hasil.created) {
+            recordsWritten++;
+            logger.info(`Catatan fulfillment dibuat untuk ${mOrder.externalOrderId}: ${hasil.reason}`);
+          }
         } catch (err) {
           logger.warn('Gagal memproses fulfillment otomatis', {
             orderId: result.orderId,
@@ -1163,41 +1184,13 @@ async function recordTrackEvent(
   });
   return true;
 }
-
 /**
- * Urutan maju status pengiriman. Semakin besar semakin jauh perjalanannya.
- *
- * Dipakai untuk mencegah status MUNDUR. Dua sumber memberi kabar status:
- *   1. sinkron pesanan  - `order_status` pesanan (mis. `SHIPPED`, `COMPLETED`)
- *   2. sinkron pelacakan - `logistics_status` dari get_tracking_info
- *
- * Sumber kedua sering tertinggal, terutama di sandbox yang tidak pernah
- * menaikkan `LOGISTICS_REQUEST_CREATED`. Karena pelacakan dijalankan SESUDAH
- * sinkron pesanan pada setiap putaran, kabar maju dari pesanan langsung
- * ditimpa kembali ke "siap dikirim" - paket yang sudah dijemput kurir selamanya
- * tampak belum dikirim, dan pesanan yang sudah diterima tidak pernah selesai.
- *
- * Karena itu status hanya boleh maju, kecuali keadaan luar biasa yang memang
- * harus selalu berlaku: gagal dan dikembalikan.
+ * Aturan "status paket hanya boleh maju" tinggal di domain
+ * (`shipping/domain/shipment-status`), supaya webhook, sinkronisasi, dan UI
+ * memakai satu sumber yang sama. Di-re-export di sini agar pemanggil lama
+ * (dan test regresinya) tidak perlu diubah.
  */
-const SHIPMENT_RANK: Record<string, number> = {
-  PENDING: 0,
-  READY_TO_SHIP: 1,
-  PICKED_UP: 2,
-  IN_TRANSIT: 3,
-  DELIVERED: 4,
-};
-
-export function shouldAdvanceShipmentStatus(current: string, next: string): boolean {
-  // Keadaan luar biasa selalu boleh berlaku, dari mana pun asalnya.
-  if (next === 'FAILED' || next === 'RETURNED') return true;
-  // Sekali gagal/dikembalikan, jangan digeser mundur oleh kabar yang tertinggal.
-  if (current === 'FAILED' || current === 'RETURNED') return false;
-  const a = SHIPMENT_RANK[current];
-  const b = SHIPMENT_RANK[next];
-  if (a === undefined || b === undefined) return true;
-  return b >= a;
-}
+export { shouldAdvanceShipmentStatus } from '@/modules/shipping/domain/shipment-status';
 
 export async function triggerTrackingSync(tenantId: string, shopId: string, actorId: string) {
   const { conn, creds } = await loadConnection(tenantId, shopId);
@@ -1215,7 +1208,10 @@ export async function triggerTrackingSync(tenantId: string, shopId: string, acto
     const activeShipments = await prisma.shipment.findMany({
       where: {
         order: { shopId, tenantId },
-        status: { notIn: ['DELIVERED', 'FAILED', 'RETURNED'] },
+        // `CANCELLED` ikut dikecualikan: paket yang dibatalkan tidak akan
+        // bergerak lagi, jadi menanyakannya ke Shopee setiap putaran hanya
+        // membuang kuota API.
+        status: { notIn: ['DELIVERED', 'FAILED', 'RETURNED', 'CANCELLED'] },
       },
       include: { order: { select: { externalOrderId: true, status: true } } },
       take: 200,
@@ -1877,9 +1873,45 @@ async function handleOrderStatusPush(
       } catch (e) {
         logger.warn(`Gagal membersihkan fulfillment pesanan batal ${orderSn}: ${(e as Error).message}`);
       }
+
+      // Catatan pengiriman ikut ditutup sebagai DIBATALKAN (bukan gagal kirim),
+      // dan hanya bila paketnya memang belum keluar gudang. Tanpa langkah ini,
+      // baris pengiriman tertinggal di "Siap Kirim" padahal pesanannya sudah
+      // batal — operator melihat pekerjaan yang sebenarnya tidak ada.
+      try {
+        const pengiriman = await prisma.shipment.findFirst({
+          where: { orderId: order.id },
+          select: { id: true, status: true },
+        });
+        if (pengiriman && shouldAdvanceShipmentStatus(pengiriman.status, 'CANCELLED')) {
+          await prisma.shipment.update({
+            where: { id: pengiriman.id },
+            data: { status: 'CANCELLED', shippedAt: null, deliveredAt: null },
+          });
+          logger.info(`Pengiriman pesanan batal ${orderSn} ditandai CANCELLED (bukan gagal kirim).`);
+        }
+      } catch (e) {
+        logger.warn(`Gagal menandai pengiriman batal ${orderSn}: ${(e as Error).message}`);
+      }
     }
 
     logger.info(`Order ${orderSn} status diupdate via webhook: ${order.status} → ${status}`);
+
+    // Pesanan yang baru menjadi siap dikerjakan (mis. pembeli membayar) harus
+    // langsung punya catatan fulfillment, tanpa menunggu putaran sinkronisasi
+    // berikutnya. Tanpa ini, pesanan itu tampil sebagai "Pesanan Baru" tanpa
+    // antrean kerja dan tidak ikut dihitung sebagai pekerjaan gudang.
+    if (status === 'CONFIRMED') {
+      try {
+        const hasil = await ensureFulfillmentForOrder(tenantId, order.id, 'webhook');
+        if (hasil.created) {
+          logger.info(`Catatan fulfillment dibuat via webhook untuk ${orderSn}: ${hasil.reason}`);
+        }
+      } catch (e) {
+        logger.warn(`Gagal membuat catatan fulfillment ${orderSn}: ${(e as Error).message}`);
+      }
+    }
+
     broadcastSystemEvent('order:updated', {
       tenantId,
       shopId,
@@ -1904,6 +1936,13 @@ async function handleTrackingNoPush(
     where: { shopId_externalOrderId: { shopId, externalOrderId: orderSn } },
   });
   if (!order) return;
+
+  // Pesanan batal tidak boleh mendapat catatan pengiriman baru: nomor resi yang
+  // telat dikirim Shopee akan menghidupkan kembali paket yang tidak pernah ada.
+  if (order.status === 'CANCELLED') {
+    logger.info(`AWB push untuk pesanan batal ${orderSn} diabaikan (tidak membuat pengiriman).`);
+    return;
+  }
 
   await upsertShipment(tenantId, order.id, trackingNo, null, 'PROCESSED');
   logger.info(`Shipment AWB diupdate via webhook: order ${orderSn}, AWB ${trackingNo}`);
@@ -1974,10 +2013,25 @@ async function handlePackageFulfillmentPush(
   });
   if (!order) return;
 
+  // Pesanan batal: jangan menghidupkan paket yang tidak pernah dikirim.
+  if (order.status === 'CANCELLED') {
+    logger.info(`Push status paket untuk pesanan batal ${orderSn} diabaikan.`);
+    return;
+  }
+
   // Map Shopee package fulfillment status to shipment status
   const shipmentStatus = mapLogisticsStatus(fulfillmentStatus);
   const shipment = await prisma.shipment.findFirst({ where: { orderId: order.id } });
   if (shipment) {
+    // Push bisa datang tidak berurutan (mis. `READY_TO_SHIP` setelah paket
+    // dijemput). Tanpa penjagaan ini status paket bisa mundur, dan kabar
+    // `DELIVERED` yang datang lebih dulu bisa tertimpa kabar lama.
+    if (!shouldAdvanceShipmentStatus(shipment.status, shipmentStatus)) {
+      logger.info(
+        `Push status paket ${orderSn} diabaikan: ${shipment.status} → ${shipmentStatus} bukan kemajuan.`,
+      );
+      return;
+    }
     await prisma.shipment.update({
       where: { id: shipment.id },
       data: {
@@ -2004,7 +2058,15 @@ async function upsertShipment(
   carrier: string | null,
   rawStatus: string,
 ) {
-  const status = mapLogisticsStatus(rawStatus);
+  // `rawStatus` di sini adalah status PESANAN dari Shopee (READY_TO_SHIP /
+  // PROCESSED / CANCELLED / …), bukan status logistik. Karena itu pemetaannya
+  // memakai `mapOrderStatusToShipment`: pesanan `CANCELLED` menjadi paket
+  // `CANCELLED` — dulu dipetakan ke `FAILED`, sehingga pesanan batal tampil
+  // sebagai "Gagal kirim" di Lacak Kiriman.
+  const status = mapOrderStatusToShipment(rawStatus);
+  // `null` = status pesanan ini tidak menyimpulkan apa pun tentang paket
+  // (mis. belum dibayar / pembatalan baru diajukan). Jangan menulis tebakan.
+  if (!status) return;
   const existing = await prisma.shipment.findFirst({ where: { orderId } });
 
   if (existing) {
@@ -2025,7 +2087,12 @@ async function upsertShipment(
         awb,
         carrier,
         status,
-        shippedAt: status !== 'PENDING' && status !== 'READY_TO_SHIP' ? new Date() : null,
+        // Paket yang dibatalkan tidak pernah meninggalkan gudang, jadi tidak
+        // punya waktu kirim.
+        shippedAt:
+          status !== 'PENDING' && status !== 'READY_TO_SHIP' && status !== 'CANCELLED'
+            ? new Date()
+            : null,
       },
     });
   }
@@ -2036,7 +2103,15 @@ async function upsertShipment(
  */
 export function mapLogisticsStatus(
   status: string,
-): 'PENDING' | 'READY_TO_SHIP' | 'PICKED_UP' | 'IN_TRANSIT' | 'DELIVERED' | 'FAILED' | 'RETURNED' {
+):
+  | 'PENDING'
+  | 'READY_TO_SHIP'
+  | 'CANCELLED'
+  | 'PICKED_UP'
+  | 'IN_TRANSIT'
+  | 'DELIVERED'
+  | 'FAILED'
+  | 'RETURNED' {
   // `LOGISTICS_REQUEST_CREATED` = Shopee sudah membuat permintaan pengiriman,
   // paket BELUM diambil kurir. Semuanya sebelum diambil kurir dipetakan ke
   // `READY_TO_SHIP` supaya "Lacak Kiriman" tidak menampilkan status yang salah.
@@ -2071,8 +2146,12 @@ export function mapLogisticsStatus(
     case 'LOGISTICS_PICKUP_FAILED':
     case 'LOGISTICS_DELIVERY_FAILED':
     case 'LOGISTICS_LOST':
-    case 'CANCELLED':
       return 'FAILED';
+    // Pembatalan bukan kegagalan kurir. Status logistik `CANCELLED` berarti
+    // pengiriman dibatalkan (biasanya karena pesanannya batal) — paketnya tidak
+    // pernah sampai ke kurir, jadi bukan "gagal kirim".
+    case 'CANCELLED':
+      return 'CANCELLED';
     case 'TO_RETURN':
     case 'RETURNED':
       return 'RETURNED';

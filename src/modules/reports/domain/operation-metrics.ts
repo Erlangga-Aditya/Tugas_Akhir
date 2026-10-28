@@ -20,12 +20,16 @@ export const TAHAP_OPERASIONAL = {
   siapDiserahkan: 'Siap Diserahkan',
   sudahDiserahkan: 'Diserahkan ke Kurir',
   diterimaShopee: 'Diterima Kurir Shopee',
-  gagal: 'Gagal / Tertahan',
 } as const;
 
 export type TahapOperasional = keyof typeof TAHAP_OPERASIONAL;
 
-/** Status pekerjaan gudang → tahap yang dilihat owner. */
+/** Status pekerjaan gudang → tahap yang dilihat owner.
+ *
+ * `EXCEPTION` sengaja TIDAK dipetakan: status itu hanya penutup catatan
+ * fulfillment pesanan batal — bukan pekerjaan gudang. Memetakannya ke kartu
+ * "Gagal" dulu membuat kartu menampilkan 68 yang seluruhnya pesanan batal.
+ */
 const PETA_TAHAP: Record<string, TahapOperasional> = {
   WAITING_STOCK: 'perluProduksi',
   READY_TO_PICK: 'siapDiambil',
@@ -35,11 +39,15 @@ const PETA_TAHAP: Record<string, TahapOperasional> = {
   PACKED: 'siapDiserahkan',
   READY_TO_SHIP: 'siapDiserahkan',
   HANDED_OVER: 'sudahDiserahkan',
-  EXCEPTION: 'gagal',
 };
 
 export function tahapDariStatus(status: string): TahapOperasional | null {
   return PETA_TAHAP[status] ?? null;
+}
+
+/** Guard nilai `?tahap=` dari URL — nilai tak dikenal diabaikan, bukan diteruskan. */
+export function isTahapOperasional(value: string | null | undefined): value is TahapOperasional {
+  return typeof value === 'string' && value in TAHAP_OPERASIONAL;
 }
 
 export type HitunganTahap = Record<TahapOperasional, number>;
@@ -52,7 +60,6 @@ export function hitungTahap(statuses: readonly string[]): HitunganTahap {
     siapDiserahkan: 0,
     sudahDiserahkan: 0,
     diterimaShopee: 0,
-    gagal: 0,
   };
   for (const s of statuses) {
     const tahap = tahapDariStatus(s);

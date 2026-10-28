@@ -43,4 +43,22 @@ describe('status pengiriman hanya boleh maju', () => {
     expect(shouldAdvanceShipmentStatus('FAILED', 'IN_TRANSIT')).toBe(false);
     expect(shouldAdvanceShipmentStatus('RETURNED', 'DELIVERED')).toBe(false);
   });
+
+  it('pembatalan hanya sah selama paket belum keluar gudang', () => {
+    // Pesanan batal sebelum dijemput kurir → paketnya memang tidak pernah ada.
+    expect(shouldAdvanceShipmentStatus('READY_TO_SHIP', 'CANCELLED')).toBe(true);
+    expect(shouldAdvanceShipmentStatus('PENDING', 'CANCELLED')).toBe(true);
+
+    // Paket yang SUDAH dijemput/di jalan tidak boleh "dibatalkan": barangnya
+    // nyata-nyata keluar gudang. Jalur yang benar adalah retur, bukan pembatalan.
+    expect(shouldAdvanceShipmentStatus('PICKED_UP', 'CANCELLED')).toBe(false);
+    expect(shouldAdvanceShipmentStatus('IN_TRANSIT', 'CANCELLED')).toBe(false);
+    expect(shouldAdvanceShipmentStatus('DELIVERED', 'CANCELLED')).toBe(false);
+  });
+
+  it('paket batal tidak bisa dihidupkan lagi oleh kabar terlambat', () => {
+    expect(shouldAdvanceShipmentStatus('CANCELLED', 'PICKED_UP')).toBe(false);
+    expect(shouldAdvanceShipmentStatus('CANCELLED', 'IN_TRANSIT')).toBe(false);
+    expect(shouldAdvanceShipmentStatus('CANCELLED', 'FAILED')).toBe(false);
+  });
 });

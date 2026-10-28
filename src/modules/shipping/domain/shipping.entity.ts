@@ -3,8 +3,11 @@ import type { ShipmentStatus } from '@prisma/client';
 export type { ShipmentStatus };
 
 const SHIPMENT_TRANSITIONS: Record<ShipmentStatus, ShipmentStatus[]> = {
-  PENDING: ['READY_TO_SHIP'],
-  READY_TO_SHIP: ['PICKED_UP', 'FAILED'],
+  PENDING: ['READY_TO_SHIP', 'CANCELLED'],
+  READY_TO_SHIP: ['PICKED_UP', 'FAILED', 'CANCELLED'],
+  // Pesanan batal sebelum paket dijemput. Paket yang SUDAH dijemput tidak
+  // boleh dibatalkan — kalau pesanannya batal, paketnya mengikuti jalur retur.
+  CANCELLED: [],
   PICKED_UP: ['IN_TRANSIT', 'FAILED'],
   IN_TRANSIT: ['DELIVERED', 'FAILED', 'RETURNED'],
   DELIVERED: [],

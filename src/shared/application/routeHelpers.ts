@@ -102,3 +102,26 @@ export function getQueryParam(request: NextRequest, key: string): string | undef
   return val !== null && val.trim() !== '' ? val.trim() : undefined;
 }
 
+/**
+ * Ambil parameter query yang HARUS salah satu nilai enum.
+ *
+ * Kenapa perlu: `getQueryParam(request, 'status') as ShipmentStatus` hanya
+ * berlaku di TypeScript — saat berjalan, nilai apa pun diteruskan apa adanya ke
+ * Prisma. Nilai asing (mis. `?status=ALL` dari tautan lama atau `?status=`
+ * yang diketik manual) membuat query gagal dan endpoint membalas daftar kosong
+ * tanpa penjelasan, sehingga terlihat seperti "data hilang".
+ *
+ * Padanan yang sudah lebih dulu dipakai endpoint station: nilai tak dikenal
+ * diabaikan (dianggap tidak memfilter), bukan diteruskan.
+ */
+export function getEnumQueryParam<T extends string>(
+  request: NextRequest,
+  key: string,
+  allowed: readonly T[],
+): T | undefined {
+  const val = getQueryParam(request, key);
+  if (!val) return undefined;
+  const cocok = allowed.find((a) => a === val);
+  return cocok;
+}
+

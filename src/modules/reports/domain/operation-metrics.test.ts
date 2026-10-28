@@ -1,20 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { hitungTahap, TAHAP_OPERASIONAL } from './operation-metrics';
+import { hitungTahap, isTahapOperasional, TAHAP_OPERASIONAL, tahapDariStatus } from './operation-metrics';
 
 describe('TAHAP_OPERASIONAL', () => {
-  it('mengandung semua tahap yang diharapkan', () => {
-    const expected = new Set([
-      'perluProduksi',
-      'siapDiambil',
-      'sedangDipacking',
-      'siapDiserahkan',
-      'sudahDiserahkan',
-      'diterimaShopee',
-      'gagal',
-    ]);
-    for (const key of Object.keys(TAHAP_OPERASIONAL) as Array<keyof typeof TAHAP_OPERASIONAL>) {
-      expect(expected.has(key)).toBe(true);
-    }
+  it('mengandung semua tahap yang diharapkan — tanpa kartu "gagal"', () => {
+    expect(Object.keys(TAHAP_OPERASIONAL).sort()).toEqual(
+      [
+        'perluProduksi',
+        'siapDiambil',
+        'sedangDipacking',
+        'siapDiserahkan',
+        'sudahDiserahkan',
+        'diterimaShopee',
+      ].sort(),
+    );
   });
 });
 
@@ -26,7 +24,6 @@ describe('hitungTahap', () => {
     siapDiserahkan: statuses.filter((s) => ['PACKED', 'READY_TO_SHIP'].includes(s)).length,
     sudahDiserahkan: statuses.filter((s) => s === 'HANDED_OVER').length,
     diterimaShopee: 0,
-    gagal: statuses.filter((s) => s === 'EXCEPTION').length,
   });
 
   it('menangani status kosong', () => {
@@ -48,15 +45,44 @@ describe('hitungTahap', () => {
     expect(r.siapDiserahkan).toBe(2);
   });
 
-  it('EXCEPTION → gagal', () => {
-    expect(hitungTahap(['EXCEPTION', 'EXCEPTION']).gagal).toBe(2);
+  it('EXCEPTION TIDAK masuk kelompok apa pun — itu penutup pesanan batal, bukan pekerjaan gudang', () => {
+    const r = hitungTahap(['EXCEPTION', 'EXCEPTION']);
+    for (const key of Object.keys(r) as Array<keyof typeof r>) {
+      expect(r[key]).toBe(0);
+    }
   });
 
   it('status tidak dikenal tidak masuk ke kelompok apa pun', () => {
     const r = hitungTahap(['FOOBAR']);
     for (const key of Object.keys(r) as Array<keyof typeof r>) {
-      if (key === 'diterimaShopee') continue;
       expect(r[key]).toBe(0);
     }
+  });
+});
+
+describe('tahapDariStatus', () => {
+  it('HANDED_OVER → sudahDiserahkan', () => {
+    expect(tahapDariStatus('HANDED_OVER')).toBe('sudahDiserahkan');
+  });
+
+  it('EXCEPTION → null', () => {
+    expect(tahapDariStatus('EXCEPTION')).toBeNull();
+  });
+});
+
+describe('isTahapOperasional — guard parameter ?tahap= dari URL', () => {
+  it('menerima semua kunci TAHAP_OPERASIONAL', () => {
+    for (const key of Object.keys(TAHAP_OPERASIONAL)) {
+      expect(isTahapOperasional(key)).toBe(true);
+    }
+  });
+
+  it('menolak nilai tak dikenal, kosong, dan bukan string', () => {
+    expect(isTahapOperasional('gagal')).toBe(false);
+    expect(isTahapOperasional('PERLU_PRODUKSI')).toBe(false);
+    expect(isTahapOperasional('')).toBe(false);
+    expect(isTahapOperasional(null)).toBe(false);
+    expect(isTahapOperasional(undefined)).toBe(false);
+    expect(isTahapOperasional(42 as unknown as string)).toBe(false);
   });
 });

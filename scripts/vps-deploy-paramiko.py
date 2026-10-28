@@ -14,7 +14,7 @@ import sys
 
 import paramiko
 
-HOST = '103.178.174.224'
+HOST = '45.126.43.98'
 USER = 'root'
 APP_DIR = '/opt/efulfill/app'
 # Python di Windows tidak mengenal /tmp (itu path MSYS). Berkas lokal memakai
@@ -41,7 +41,24 @@ def jalankan(client: paramiko.SSHClient, perintah: str, batas: int = 900) -> tup
     return kode, teks
 
 
+def buat_tarball() -> None:
+    """Buat ulang tarball SEGAR dari repo saat ini.
+
+    Wajib: pernah terjadi deploy tak sengaja memakai ef8.tgz lama yang tersisa
+    di %TEMP% (kode produksi ter-roll-back tanpa sadar). Sejak itu tarball
+    SELALU dibuat ulang — tidak pernah memakai berkas yang sudah ada.
+    """
+    import tarfile
+
+    akar = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with tarfile.open(LOCAL_TAR, 'w:gz') as tar:
+        for folder in ('src', 'prisma'):
+            tar.add(os.path.join(akar, folder), arcname=folder)
+    print(f'tarball segar dibuat: {LOCAL_TAR}')
+
+
 def deploy(client: paramiko.SSHClient) -> int:
+    buat_tarball()
     sftp = client.open_sftp()
     sftp.put(LOCAL_TAR, '/tmp/ef8.tgz')
     sftp.close()

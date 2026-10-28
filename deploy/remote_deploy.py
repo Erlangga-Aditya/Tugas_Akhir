@@ -13,10 +13,10 @@ Yang dilakukan:
   8. Memeriksa hasilnya dari luar
 
 Jalankan (sandi TIDAK ditulis ke file mana pun):
-  SSHPASS='...' VPS_HOST=103.178.174.224 uv run --with paramiko python deploy/remote_deploy.py
+  SSHPASS='...' VPS_HOST=45.126.43.98 uv run --with paramiko python deploy/remote_deploy.py
 
 Opsional:
-  PUBLIC_HOST   host yang dipakai untuk aplikasi (default: 103-178-174-224.sslip.io)
+  PUBLIC_HOST   host yang dipakai untuk aplikasi (default: 45-126-43-98.sslip.io)
   CERTBOT_EMAIL surel untuk notifikasi sertifikat SSL
 """
 from __future__ import annotations
@@ -33,11 +33,11 @@ from pathlib import Path
 import paramiko
 
 REPO = Path(__file__).resolve().parents[1]
-HOST = os.environ.get("VPS_HOST", "103.178.174.224")
+HOST = os.environ.get("VPS_HOST", "45.126.43.98")
 USER = os.environ.get("VPS_USER", "root")
 PASSWORD = os.environ.get("SSHPASS")
 PORT = int(os.environ.get("VPS_PORT", "22"))
-PUBLIC_HOST = os.environ.get("PUBLIC_HOST", "103-178-174-224.sslip.io")
+PUBLIC_HOST = os.environ.get("PUBLIC_HOST", "45-126-43-98.sslip.io")
 CERTBOT_EMAIL = os.environ.get("CERTBOT_EMAIL", "")
 
 APP_DIR = "/opt/efulfill/app"

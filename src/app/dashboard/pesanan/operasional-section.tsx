@@ -3,31 +3,27 @@
 /**
  * Ringkasan operasional — ditampilkan di halaman Pesanan (bukan Laporan).
  *
- * Dipisah dari dashboard untuk menghindari overload kartu. Hanya tampil bila
- * user punya izin `page.reports`.
+ * Ikut satu-satunya filter tanggal halaman (lewat prop) — tidak punya filter
+ * sendiri lagi, karena dua filter di satu layar membuat angka sulit dicocokkan.
+ * Hanya tampil bila user punya izin `page.reports`.
  *
- * Dua kelompok angka yang sengaja dipisah:
- *   1. Keadaan SEKARANG (dari status fulfillment saat ini, tanpa saringan tanggal).
- *   2. Kejadian DALAM RENTANG (yang benar-benar dipacking/diserahkan pada hari yang dipilih).
+ * Tiga kelompok angka yang sengaja dipisah:
+ *   1. Keadaan SEKARANG (tanpa saringan tanggal) — kartunya DAPAT DIKLIK:
+ *      klik = daftar di bawah hanya menampilkan pesanan tahap itu (bukti kartu).
+ *   2. Aksi di aplikasi DALAM RENTANG (dipacking / diserahkan lewat layar ini).
+ *   3. Kejadian dari Shopee DALAM RENTANG (paket dijemput kurir — pelakunya
+ *      bukan operator aplikasi, mis. dikirim lewat Seller Centre).
  */
 import { useEffect, useState } from 'react';
-import {
-  AlertTriangle,
-  Boxes,
-  CheckCircle2,
-  ClipboardList,
-  Loader2,
-  Package,
-  Truck,
-} from 'lucide-react';
+import { Boxes, CheckCircle2, ClipboardList, Loader2, Package, PackageCheck, Truck } from 'lucide-react';
 import { api } from '@/lib/api';
 import { usePermission } from '@/hooks/usePermission';
+import { RANGE_LABEL, type RangePreset } from '@/modules/fulfillment/domain/date-range';
 import {
-  RANGE_LABEL,
-  RANGE_PRESETS,
-  type RangePreset,
-} from '@/modules/fulfillment/domain/date-range';
-import { hitungTahap, TAHAP_OPERASIONAL } from '@/modules/reports/domain/operation-metrics';
+  hitungTahap,
+  TAHAP_OPERASIONAL,
+  type TahapOperasional,
+} from '@/modules/reports/domain/operation-metrics';
 
 // ── Tipe data ────────────────────────────────────────────────────────────────
 
@@ -35,18 +31,30 @@ interface OperasionalData {
   preset: RangePreset;
   /** Tahapan kerja gudang saat ini. */
   tahap: ReturnType<typeof hitungTahap>;
-  /** Kejadian dipacking / diserahkan / diterima kurir dalam rentang terpilih. */
+  /** Aksi di aplikasi dalam rentang terpilih. */
   kejadian: {
     dipacking: number;
     diserahkan: number;
-    diterimaKurirShopee: number;
+  };
+  /** Kejadian dari Shopee dalam rentang terpilih. */
+  kejadianShopee: {
+    dijemputKurir: number;
   };
 }
 
-// ── Kartu statistik ─────────────────────────────────────────────────────────
+interface OperasionalSectionProps {
+  /** Rentang tanggal yang sedang dipilih halaman — dipakai bersama. */
+  preset: RangePreset;
+  /** Tahap yang sedang disaring (null = tidak ada). */
+  tahapAktif: TahapOperasional | null;
+  /** Klik kartu keadaan → halaman menyaring daftar ke tahap itu (bukti kartu). */
+  pilihTahap: (tahap: TahapOperasional) => void;
+}
 
-interface KartuDefinisi {
-  key: string;
+// ── Kartu keadaan ────────────────────────────────────────────────────────────
+
+interface KartuKeadaanDef {
+  key: Exclude<TahapOperasional, 'sudahDiserahkan' | 'diterimaShopee'>;
   label: string;
   hint: string;
   nilai: number;
@@ -60,11 +68,9 @@ const WARNA = {
   ambil: 'var(--info)',
   packing: 'var(--primary)',
   serah: 'var(--primary-solid)',
-  gagal: 'var(--danger)',
-  selesai: 'var(--success)',
 };
 
-function buatKartuKeadaan(t: ReturnType<typeof hitungTahap>): KartuDefinisi[] {
+function buatKartuKeadaan(t: ReturnType<typeof hitungTahap>): KartuKeadaanDef[] {
   return [
     {
       key: 'perluProduksi',
@@ -98,25 +104,24 @@ function buatKartuKeadaan(t: ReturnType<typeof hitungTahap>): KartuDefinisi[] {
       warna: WARNA.serah,
       ikon: Truck,
     },
-    {
-      key: 'gagal',
-      label: TAHAP_OPERASIONAL.gagal,
-      hint: 'Paket bermasalah — perlu penanganan operator',
-      nilai: t.gagal,
-      warna: WARNA.gagal,
-      ikon: AlertTriangle,
-    },
   ];
+}
+
+function labelRentang(preset: RangePreset): string {
+  return ` pada ${RANGE_LABEL[preset].toLowerCase()}`;
 }
 
 // ── Komponen utama ───────────────────────────────────────────────────────────
 
-export function OperasionalSectionPesanan() {
+export function OperasionalSectionPesanan({
+  preset,
+  tahapAktif,
+  pilihTahap,
+}: OperasionalSectionProps) {
   const { can } = usePermission();
 
   // Semua hook HARUS dipanggil di urutan yang sama setiap render.
   // Permission check dilakukan SETELAH semua hook agar tidak melanggar rules-of-hooks.
-  const [preset, setPreset] = useState<RangePreset>('today');
   const [data, setData] = useState<OperasionalData | null>(null);
   const [memuat, setMemuat] = useState(true);
   const [galat, setGalat] = useState('');
@@ -125,9 +130,7 @@ export function OperasionalSectionPesanan() {
     let dibatalkan = false;
     void (async () => {
       try {
-        const hasil = await api<OperasionalData>(
-          `/api/v1/reports/operations?range=${preset}`,
-        );
+        const hasil = await api<OperasionalData>(`/api/v1/reports/operations?range=${preset}`);
         if (dibatalkan) return;
         setData(hasil);
         setGalat('');
@@ -149,32 +152,12 @@ export function OperasionalSectionPesanan() {
   const kartuKeadaan = data ? buatKartuKeadaan(data.tahap) : [];
 
   return (
-    <section className="card mb24" aria-label="Ringkasan operasional gudang">
-      {/* Judul + filter rentang */}
-      <div
-        className="queue-card-head"
-        style={{ flexWrap: 'wrap', gap: 10, marginBottom: 4 }}
-      >
-        <div>
-          <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>
-            Ringkasan Operasional Gudang
-          </h2>
-          <p className="small muted" style={{ margin: '2px 0 0' }}>
-            Keadaan sekarang + jumlah paket yang benar-benar dipacking &amp; diserahkan pada rentang tanggal terpilih.
-          </p>
-        </div>
-        <div className="filter-chips-wrap">
-          {RANGE_PRESETS.map((p) => (
-            <button
-              key={p}
-              type="button"
-              className={`chip${preset === p ? ' chip-active' : ''}`}
-              onClick={() => setPreset(p)}
-            >
-              {RANGE_LABEL[p]}
-            </button>
-          ))}
-        </div>
+    <section className="card mb16" aria-label="Ringkasan operasional gudang">
+      <div>
+        <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>Ringkasan Operasional Gudang</h2>
+        <p className="small muted" style={{ margin: '2px 0 0' }}>
+          Keadaan gudang sekarang + kejadian pada rentang tanggal yang dipilih di atas.
+        </p>
       </div>
 
       {/* Loading / Error */}
@@ -188,55 +171,75 @@ export function OperasionalSectionPesanan() {
         </p>
       ) : data ? (
         <>
-          {/* ── Bagian 1: Keadaan SEKARANG ─────────────────────────────── */}
+          {/* ── Bagian 1: Keadaan SEKARANG (kartu dapat diklik = bukti) ──── */}
           <div className="stat-grid" style={{ marginTop: 12 }}>
-            {kartuKeadaan.map((k) => (
-              <div
-                key={k.key}
-                className="stat-card"
-                style={{ borderLeft: `3px solid ${k.warna}` }}
-              >
-                <div className="small muted" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <k.ikon size={13} aria-hidden /> {k.label}
-                </div>
-                <div className="stat-value">{k.nilai}</div>
-                <div className="small muted">{k.hint}</div>
-              </div>
-            ))}
+            {kartuKeadaan.map((k) => {
+              const aktif = tahapAktif === k.key;
+              const Icon = k.ikon;
+              return (
+                <button
+                  key={k.key}
+                  type="button"
+                  className="stat-card"
+                  style={{
+                    borderLeft: `3px solid ${k.warna}`,
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    outline: aktif ? `2px solid ${k.warna}` : undefined,
+                  }}
+                  onClick={() => pilihTahap(k.key)}
+                  aria-pressed={aktif}
+                  title={`Tampilkan pesanan: ${k.label}`}
+                >
+                  <div className="small muted" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Icon size={13} aria-hidden /> {k.label}
+                  </div>
+                  <div className="stat-value">{k.nilai}</div>
+                  <div className="small muted">
+                    {aktif ? 'diklik — daftar di bawah hanya pesanan ini' : k.hint}
+                  </div>
+                </button>
+              );
+            })}
           </div>
 
-          {/* ── Bagian 2: Kejadian DALAM RENTANG ───────────────────────── */}
+          {/* ── Bagian 2: Aksi di aplikasi DALAM RENTANG ─────────────────── */}
           <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--divider)' }}>
             <p className="small muted" style={{ margin: '0 0 10px' }}>
-              Paket yang benar-benar dipacking / diserahkan / diterima kurir pada rentang
-              {preset === 'today'
-                ? ' hari ini'
-                : preset === 'yesterday'
-                  ? ' kemarin'
-                  : preset === 'last7'
-                    ? ' 7 hari terakhir'
-                    : preset === 'last30'
-                      ? ' 30 hari terakhir'
-                      : ' semua tanggal'}
-              .
+              Rentang tanggal yang dipilih: <strong>{RANGE_LABEL[preset]}</strong>
             </p>
             <div className="stat-grid">
               <div className="stat-card">
-                <div className="small muted">Dipacking (rentang ini)</div>
+                <div className="small muted">Dipacking via aplikasi{labelRentang(preset)}</div>
                 <div className="stat-value">{data.kejadian.dipacking}</div>
-                <div className="small muted">paket dibungkus &amp; siap kirim</div>
+                <div className="small muted">paket dibungkus lewat layar ini (aktor tercatat)</div>
               </div>
               <div className="stat-card">
-                <div className="small muted">Diserahkan ke kurir (rentang ini)</div>
+                <div className="small muted">Diserahkan via aplikasi{labelRentang(preset)}</div>
                 <div className="stat-value">{data.kejadian.diserahkan}</div>
-                <div className="small muted">paket diambil pihak kedua (kurir internal / pihak ketiga)</div>
+                <div className="small muted">paket diserahterimakan lewat layar ini (aktor tercatat)</div>
               </div>
+            </div>
+          </div>
+
+          {/* ── Bagian 3: Kejadian dari Shopee DALAM RENTANG ─────────────── */}
+          <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--divider)' }}>
+            <p className="small muted" style={{ margin: '0 0 10px' }}>
+              Kejadian dari Shopee — paket yang dikirim lewat Seller Centre tetap terhitung di sini,
+              karena kejadian ini terjadi di Shopee, bukan lewat layar aplikasi.
+            </p>
+            <div className="stat-grid">
               <div className="stat-card">
                 <div className="small muted" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <CheckCircle2 size={13} aria-hidden /> Diterima kurir Shopee
+                  <PackageCheck size={13} aria-hidden /> Dijemput kurir Shopee{labelRentang(preset)}
                 </div>
-                <div className="stat-value">{data.kejadian.diterimaKurirShopee}</div>
-                <div className="small muted">paket yang sudah dijemput langsung oleh Shopee</div>
+                <div className="stat-value">{data.kejadianShopee.dijemputKurir}</div>
+                <div className="small muted">
+                  paket yang sudah keluar gudang menurut Shopee
+                  <br />
+                  <CheckCircle2 size={11} aria-hidden style={{ display: 'inline' }} /> dihitung dari tanggal
+                  kejadian, bukan waktu sinkron
+                </div>
               </div>
             </div>
           </div>

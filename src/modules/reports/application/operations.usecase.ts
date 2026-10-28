@@ -12,11 +12,19 @@ export interface OperasionalRingkas {
   rentang: { from: string | null; to: string | null };
   /** Keadaan SEKARANG: pekerjaan yang masih menunggu di gudang. */
   tahap: HitunganTahap;
-  /** Kejadian DALAM RENTANG tanggal. */
+  /** Aksi di aplikasi DALAM RENTANG tanggal (dikerjakan lewat layar ini). */
   kejadian: {
     dipacking: number;
     diserahkan: number;
-    diterimaKurirShopee: number;
+  };
+  /**
+   * Kejadian dari Shopee DALAM RENTANG: paket yang benar-benar dijemput kurir.
+   * Dihitung dari tanggal kejadian yang stabil (`shippedAt`, cadangan
+   * `deliveredAt`) — BUKAN `updatedAt`, yang ikut berubah setiap kali
+   * sinkronisasi menyentuh barisnya sehingga angka kartu naik sendiri.
+   */
+  kejadianShopee: {
+    dijemputKurir: number;
   };
   packing: { daftar: PaketPerPelaku[]; tanpaNama: number };
   serahTerima: { daftar: PaketPerPelaku[]; tanpaNama: number };
@@ -25,11 +33,15 @@ export interface OperasionalRingkas {
 /**
  * Ringkasan operasional untuk owner.
  *
- * Dua jenis angka, sengaja dipisah supaya tidak menyesatkan:
+ * Tiga jenis angka, sengaja dipisah supaya tidak menyesatkan:
  *  1. `tahap` — keadaan hari ini (berapa paket masih menunggu di tiap tahap).
  *     Tidak disaring tanggal, karena "masih menunggu" memang keadaan sekarang.
- *  2. `kejadian` + per-pelaku — disaring tanggal kejadian (kapan dipacking,
- *     kapan diserahkan), karena inilah dasar pembayaran per paket.
+ *  2. `kejadian` + per-pelaku — AKSI DI APLIKASI, disaring tanggal kejadian
+ *     (kapan dipacking, kapan diserahkan), dasar pembayaran per paket.
+ *  3. `kejadianShopee` — kejadian di sisi Shopee (paket dijemput kurir), juga
+ *     disaring tanggal kejadiannya. Terpisah dari (2) karena pelakunya bukan
+ *     operator aplikasi: paket bisa dikirim lewat Seller Centre tanpa pernah
+ *     melewati layar packing.
  */
 export async function getOperasionalRingkas(
   tenantId: string,
@@ -42,7 +54,7 @@ export async function getOperasionalRingkas(
     ...(range.to ? { lt: range.to } : {}),
   };
 
-  const [pekerjaan, dipacking, diserahkan, diterimaKurirShopee] = await Promise.all([
+  const [pekerjaan, dipacking, diserahkan, dijemputKurir] = await Promise.all([
     prisma.fulfillmentOrder.findMany({
       where: { order: { tenantId }, status: { notIn: ['COMPLETED'] } },
       select: { status: true },
@@ -55,11 +67,18 @@ export async function getOperasionalRingkas(
       where: { order: { tenantId }, handedOverAt: filterTanggal },
       select: { handedOverById: true },
     }),
+    // "Dijemput kurir Shopee" = paket sudah keluar gudang menurut kurir.
+    // Tanggal kejadiannya `shippedAt` (di-set sekali saat paket meninggalkan
+    // gudang); untuk data lama yang shippedAt-nya kosong tapi sudah DELIVERED,
+    // `deliveredAt` menjadi cadangan.
     prisma.shipment.count({
       where: {
         order: { tenantId },
         status: { in: ['PICKED_UP', 'IN_TRANSIT', 'DELIVERED'] },
-        updatedAt: filterTanggal,
+        OR: [
+          { shippedAt: filterTanggal },
+          { shippedAt: null, deliveredAt: filterTanggal },
+        ],
       },
     }),
   ]);
@@ -92,7 +111,9 @@ export async function getOperasionalRingkas(
     kejadian: {
       dipacking: dipacking.length,
       diserahkan: diserahkan.length,
-      diterimaKurirShopee,
+    },
+    kejadianShopee: {
+      dijemputKurir,
     },
     packing: hitungPerPelaku(
       dipacking.map((d) => ({ id: d.packedById, nama: d.packedById ? nama.get(d.packedById) ?? null : null })),

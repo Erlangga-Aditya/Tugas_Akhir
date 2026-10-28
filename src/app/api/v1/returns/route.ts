@@ -6,9 +6,13 @@ import {
   getRequestId,
   parsePagination,
   getQueryParam,
+  getEnumQueryParam,
   assertPermission,
 } from '@/shared/application/routeHelpers';
-import type { ReturnStatus } from '@prisma/client';
+import { ReturnStatus } from '@prisma/client';
+
+/** Nilai `?status=` yang sah, diambil dari enum Prisma. */
+const RETURN_STATUSES = Object.values(ReturnStatus);
 
 export async function GET(request: NextRequest) {
   const requestId = getRequestId(request);
@@ -16,7 +20,10 @@ export async function GET(request: NextRequest) {
     const ctx = getAuthContext(request);
     assertPermission(ctx, 'page.returns');
     const { page, pageSize } = parsePagination(request);
-    const status = getQueryParam(request, 'status') as ReturnStatus | undefined;
+    // Nilai asing diabaikan (tidak memfilter), bukan diteruskan ke Prisma:
+    // cast `as ReturnStatus` tidak berlaku saat berjalan, dan nilai asing
+    // membuat query gagal lalu endpoint membalas daftar kosong.
+    const status = getEnumQueryParam(request, 'status', RETURN_STATUSES);
     const result = await listReturns(ctx.tenantId, {
       status,
       search: getQueryParam(request, 'search'),

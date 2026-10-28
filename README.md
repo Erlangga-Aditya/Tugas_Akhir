@@ -5,8 +5,9 @@ masuk → dipilih owner → produksi (bila stok kosong) → ambil barang → pac
 serahkan ke kurir → terlacak sampai diterima pembeli. Setiap aksi tercatat
 **siapa pelakunya**, karena pembayaran packer & kurir internal dihitung per paket.
 
-Produksi: `https://103-178-174-224.sslip.io` (VPS `103.178.174.224`,
-`/opt/efulfill/app`, PM2 `efulfill`, port 3000).
+Produksi: `https://maktabah313.web.id` (VPS `45.126.43.98`,
+`/opt/efulfill/app`, PM2 `efulfill`, port 3000; jalur darurat:
+`https://45-126-43-98.sslip.io`).
 
 ## Dokumen
 

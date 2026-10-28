@@ -47,7 +47,14 @@ const STATUS_FILTERS = [
   { label: 'Diserahkan ke Kurir', value: 'PICKED_UP' },
   { label: 'Dalam Perjalanan', value: 'IN_TRANSIT' },
   { label: 'Terkirim', value: 'DELIVERED' },
-  { label: 'Gagal / Retur', value: 'RETURNED' },
+  // `FAILED` dan `RETURNED` dipisah karena artinya berbeda: gagal kirim =
+  // paket keluar gudang lalu gagal diantar; dikembalikan = paket balik ke gudang.
+  // Dulu keduanya digabung jadi satu chip `RETURNED`, sehingga paket gagal
+  // kirim tidak pernah bisa disaring sama sekali.
+  { label: 'Gagal Kirim', value: 'FAILED' },
+  { label: 'Dikembalikan', value: 'RETURNED' },
+  // Pesanan batal: paket tidak pernah dikirim. BUKAN "gagal kirim".
+  { label: 'Dibatalkan', value: 'CANCELLED' },
 ] as const;
 
 export default function PengirimanPage() {

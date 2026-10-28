@@ -17,6 +17,15 @@ describe('Shipping Domain — State Transitions', () => {
     expect(isValidShipmentTransition('DELIVERED', 'READY_TO_SHIP')).toBe(false);
     expect(isValidShipmentTransition('READY_TO_SHIP', 'IN_TRANSIT')).toBe(false);
   });
+  it('pembatalan sah sebelum dijemput kurir, dan final setelah itu', () => {
+    expect(isValidShipmentTransition('PENDING', 'CANCELLED')).toBe(true);
+    expect(isValidShipmentTransition('READY_TO_SHIP', 'CANCELLED')).toBe(true);
+    // Paket yang sudah keluar gudang tidak bisa dibatalkan — itu jalur retur.
+    expect(isValidShipmentTransition('PICKED_UP', 'CANCELLED')).toBe(false);
+    expect(isValidShipmentTransition('IN_TRANSIT', 'CANCELLED')).toBe(false);
+    // Batal bersifat final.
+    expect(isValidShipmentTransition('CANCELLED', 'PICKED_UP')).toBe(false);
+  });
 });
 
 describe('Shipping Domain — logistics status mapping', () => {

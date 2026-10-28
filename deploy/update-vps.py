@@ -8,7 +8,7 @@ Berbeda dari remote_deploy.py (yang memasang dari nol), skrip ini hanya:
   3. Build ulang, lalu menyalakan ulang aplikasi (PM2)
 
 Jalankan:
-  SSHPASS='...' VPS_HOST=103.178.174.224 uv run --with paramiko python deploy/update-vps.py
+  SSHPASS='...' VPS_HOST=45.126.43.98 uv run --with paramiko python deploy/update-vps.py
 
 Dependensi dipasang ulang otomatis bila package-lock.json berubah.
 Tambahkan INSTALL=1 untuk memaksa memasang ulang tanpa perubahan apa pun.
@@ -30,7 +30,7 @@ if hasattr(sys.stderr, 'reconfigure'):
 import paramiko
 
 REPO = Path(__file__).resolve().parents[1]
-HOST = os.environ.get("VPS_HOST", "103.178.174.224")
+HOST = os.environ.get("VPS_HOST", "45.126.43.98")
 USER = os.environ.get("VPS_USER", "root")
 PASSWORD = os.environ.get("SSHPASS")
 PORT = int(os.environ.get("VPS_PORT", "22"))

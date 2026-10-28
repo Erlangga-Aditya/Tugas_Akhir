@@ -27,7 +27,19 @@ export async function createShipment(
   const order = await prisma.order.findFirst({ where: { id: parsed.data.orderId, tenantId }, include: { shipments: true } });
   if (!order) throw new NotFoundError('Pesanan', parsed.data.orderId);
 
-  const activeShipment = order.shipments.find((s) => !['DELIVERED', 'FAILED', 'RETURNED'].includes(s.status));
+  // Pesanan batal tidak boleh dibuatkan pengiriman baru: paketnya tidak akan
+  // pernah dikirim, dan barisnya hanya akan menambah pekerjaan palsu di
+  // halaman Lacak Kiriman.
+  if (order.status === 'CANCELLED') {
+    throw new BusinessRuleViolationError(
+      'Pesanan ini sudah dibatalkan, jadi tidak bisa dibuatkan pengiriman.',
+      { orderId: order.id },
+    );
+  }
+
+  const activeShipment = order.shipments.find(
+    (s) => !['DELIVERED', 'FAILED', 'RETURNED', 'CANCELLED'].includes(s.status),
+  );
   if (activeShipment) {
     throw new BusinessRuleViolationError('Pesanan ini sudah memiliki pengiriman aktif.', { existingShipmentId: activeShipment.id });
   }

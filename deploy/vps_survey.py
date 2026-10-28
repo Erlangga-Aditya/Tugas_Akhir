@@ -3,14 +3,14 @@
 Survei VPS untuk deployment E-Fulf Hub.
 
 Sandi TIDAK disimpan di file ini — dibaca dari variabel lingkungan SSHPASS.
-Jalankan:  SSHPASS='...' VPS_HOST=103.178.174.224 uv run --with paramiko python deploy/vps_survey.py
+Jalankan:  SSHPASS='...' VPS_HOST=45.126.43.98 uv run --with paramiko python deploy/vps_survey.py
 """
 import os
 import sys
 
 import paramiko
 
-HOST = os.environ.get("VPS_HOST", "103.178.174.224")
+HOST = os.environ.get("VPS_HOST", "45.126.43.98")
 USER = os.environ.get("VPS_USER", "root")
 PASSWORD = os.environ.get("SSHPASS")
 PORT = int(os.environ.get("VPS_PORT", "22"))

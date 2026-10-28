@@ -112,6 +112,23 @@ function ItemTable({
 /** Badge keadaan paket: ikon, bukan emoji, supaya tampil sama di semua perangkat. */
 function ShipmentBadge({ order }: { order: StationOrder }) {
   const s = order.shipmentStatus;
+  // Pesanan batal tidak pernah punya paket. Kalau ada baris pengiriman lama
+  // berstatus FAILED (data sebelum perbaikan), jangan pernah tampilkan
+  // "Gagal kirim" — itu menuduh kurir atas paket yang tidak pernah dikirim.
+  if (order.orderStatus === 'CANCELLED') {
+    return (
+      <span className="badge badge-neutral">
+        <Info size={11} aria-hidden /> Paket dibatalkan
+      </span>
+    );
+  }
+  if (s === 'CANCELLED') {
+    return (
+      <span className="badge badge-neutral">
+        <Info size={11} aria-hidden /> Paket dibatalkan
+      </span>
+    );
+  }
   if (s === 'IN_TRANSIT') {
     return (
       <span className="badge badge-info">

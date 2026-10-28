@@ -143,7 +143,18 @@ export default function LaporanPage() {
           </div>
         </div>
 
-        {filteredMovements.length === 0 ? (
+        {loading ? (
+          <LoadingState message="Memuat buku besar mutasi stok..." />
+        ) : error ? (
+          <ErrorState
+            message={error}
+            onRetry={() => {
+              setLoading(true);
+              setError('');
+              load();
+            }}
+          />
+        ) : filteredMovements.length === 0 ? (
           <EmptyState
             title={search ? 'Data mutasi tidak ditemukan' : 'Belum ada mutasi stok'}
             description="Setiap penambahan, reservasi, picking, atau pengurangan stok fisik dicatat secara permanen di sini."

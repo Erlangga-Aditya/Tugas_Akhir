@@ -632,9 +632,21 @@ model Shipment {
   @@map("shipments")
 }
 
+/**
+ * Status paket.
+ *
+ * `CANCELLED` dipisahkan dari `FAILED` karena keduanya BUKAN hal yang sama:
+ *  - `FAILED`   = kurir gagal mengantar / paket hilang (paket benar-benar keluar gudang)
+ *  - `CANCELLED` = pesanan dibatalkan sebelum paket diserahkan ke kurir
+ *
+ * Sebelumnya status pesanan `CANCELLED` dipetakan ke `FAILED`, sehingga setiap
+ * pesanan batal muncul di halaman Lacak Kiriman sebagai "Gagal kirim" — padahal
+ * tidak ada paket yang gagal, paketnya memang tidak pernah dikirim.
+ */
 enum ShipmentStatus {
   PENDING
   READY_TO_SHIP
+  CANCELLED
   PICKED_UP
   IN_TRANSIT
   DELIVERED
