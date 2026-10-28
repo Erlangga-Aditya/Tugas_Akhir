@@ -9,7 +9,7 @@
 
 ---
 
-## ⚠️ TIGA HAL YANG HARUS DICEK DULU (ini penentu deadline Anda)
+## ⚠️ TIGA HAL YANG HARUS DICEK DULU (ini penentu deadline)
 
 ### 1. Kelayakan akun penjual di Indonesia — INI GERBANG TERBESAR
 
@@ -17,14 +17,13 @@ Kutipan resmi (Developer Guide /12, §3.1):
 
 > **ID (Indonesia): Mall Sellers OR Managed Sellers OR Sellers with at least 30 orders in the last 30 days.**
 
-Artinya untuk mendaftar/menjadi seller developer di Open Platform Indonesia, toko Anda harus salah satu dari:
+Berdasarkan kondisi sistem saat ini, credibility yang perlu dipenuhi:
+
 - **Mall Seller**, atau
 - **Managed Seller**, atau
 - **punya minimal 30 pesanan dalam 30 hari terakhir.**
 
-**Silakan cek dulu di toko Anda.** Kalau toko Anda belum memenuhi salah satunya, pengajuan bisa tertahan
-bukan karena aplikasinya, tetapi karena syarat kelayakan akun. Ini alasan kenapa saya minta dicek lebih dulu
-sebelum mengisi formulir.
+Saya cek dulu di toko saya sebelum mendaftar, karena kalau belum memenuhi salah satunya, pengajuan bisa tertahan bukan karena aplikasinya, tapi karena syarat kelayakan akun.
 
 ### 2. Redirect URL Domain WAJIB HTTPS (localhost tidak bisa dipakai untuk Live)
 
@@ -34,8 +33,8 @@ Kutipan resmi (Developer Guide /20 dan /16):
 > each App in the Console."* — wajib **HTTPS + TLS 1.2+**.
 > Jika tidak cocok: *"The domain of redirect_uri is not consistent with the Redirect URL Domain declared in console"*.
 
-Saat ini aplikasi Anda memakai `http://localhost:3000/api/v1/integrations/shopee/callback` (HTTP, alamat lokal).
-**localhost tidak akan lolos untuk Live.** Anda perlu:
+Saat ini aplikasi saya memakai `http://localhost:3000/api/v1/integrations/shopee/callback` (HTTP, alamat lokal).
+**localhost tidak akan lolos untuk Live.** Saya perlu:
 1. Hosting aplikasi di **domain HTTPS** (mis. `https://gudang.tokosaya.com`), lalu
 2. Daftarkan domain itu di Console pada **Test Redirect URL Domain** dan **Live Redirect URL Domain**, dan
 3. Isi **Redirect URL** di aplikasi (menu Hubungkan Shopee) memakai domain HTTPS tersebut.
@@ -47,13 +46,13 @@ Kutipan resmi (Developer Guide /14, FAQ Q4):
 > *"Can the review process for an App to go live be expedited? **A: No.** You should submit your App for
 > review at least 24 hours before the expected live date."*
 
-Jika profil akun Anda belum pernah disetujui, ada tambahan waktu: pengajuan profil penjual Indonesia
-**±7 hari kerja** (Developer Guide /12). Karena aplikasi Anda sudah punya Partner ID **dan** sudah bisa
-mengotorisasi toko, artinya **profil Anda sudah lolos** — yang tersisa hanya review Go Live (±24 jam).
+Jika profil akun saya belum pernah disetujui, ada tambahan waktu: pengajuan profil penjual Indonesia
+**±7 hari kerja** (Developer Guide /12). Karena aplikasi saya sudah punya Partner ID **dan** sudah bisa
+mengotorisasi toko, artinya **profil saya sudah lolos** — yang tersisa hanya review Go Live (±24 jam).
 
 ---
 
-## 1. Kondisi sistem Anda sekarang (dari aplikasi sendiri)
+## 1. Kondisi sistem saya sekarang (dari aplikasi sendiri)
 
 | Hal | Nilai |
 |---|---|
@@ -84,7 +83,7 @@ sudah bisa HTTPS hari ini tanpa membeli domain. Setelah domain dibeli, cukup ara
 A record ke `103.178.174.224` lalu ikuti `deploy/README-DEPLOY.md` bagian 4 —
 Redirect URL di Console juga harus diganti agar sama persis.
 
-### 1.2 Tiga langkah yang harus Anda lakukan sekarang (butuh akun Shopee Anda)
+### 1.2 Tiga langkah yang harus saya lakukan sekarang (butuh akun Shopee saya)
 
 1. **Daftarkan Redirect URL produksi** di Shopee Open Platform Console →
    App Management → Redirect URL:
@@ -97,7 +96,7 @@ Redirect URL di Console juga harus diganti agar sama persis.
    **Scan dengan Kamera** (kamera HP perlu izin) → arahkan ke barcode resi.
 
 **Arti status Developing (kutipan resmi):** *"Apps cannot be authorized to access shop data in the production
-environment"* dan *"Unable to call production environment APIs"*. Inilah sebabnya toko asli belum bisa
+environment"* dan *"Unable to call production environment APIs"*. Inilah sebabnya toko asli saya belum bisa
 tersambung dan nomor resi masih **simulasi** (aplikasi sudah memberi label "mode uji / simulasi" — tidak pernah
 diam-diam mengaku resi asli).
 
@@ -108,7 +107,7 @@ diam-diam mengaku resi asli).
 - [ ] **Kelayakan akun** terpenuhi (lihat peringatan #1).
 - [ ] Aplikasi sudah dites penuh di sandbox: sinkron pesanan, atur pengiriman, cetak resi, stok, laporan.
 - [ ] **Otorisasi + penyimpanan token** jalan — ✅ sudah ada (token terenkripsi AES-256-GCM, refresh otomatis).
-- [ ] **Redirect URL Domain (Test & Live) terdaftar HTTPS** di Console — ⬜ perlu Anda kerjakan.
+- [ ] **Redirect URL Domain (Test & Live) terdaftar HTTPS** di Console — ⬜ perlu saya kerjakan.
 - [ ] **Callback URL sandbox** diisi (Console: Tools → push/callback) — untuk uji push.
 - [ ] Alamat IP server untuk **Declaration of IT Assets** (lihat bagian 4).
 - [ ] **URL aplikasi versi Live** (HTTPS, bisa dibuka & bisa login) + **username & password uji** yang benar-benar bekerja.
@@ -122,9 +121,9 @@ diam-diam mengaku resi asli).
 
 | Field (persis nama di Console) | Batas | Isi yang disarankan |
 |---|---|---|
-| *Please provide a live version of your business product's URL for Shopee's testing purposes* | 200 karakter | `https://<domain-anda>/login` (halaman login aplikasi gudang Anda) |
+| *Please provide a live version of your business product's URL for Shopee's testing purposes* | 200 karakter | `https://<domain-anda>/login` (halaman login aplikasi gudang saya) |
 | *Test Username of Business Product* | — | mis. `owner@toko.id` (akun yang benar-benar bisa login) |
-| *Test Password of Business Product* | — | (isi password akun uji Anda) |
+| *Test Password of Business Product* | — | (isi password akun uji saya) |
 | *Brief Introduction* | 500 karakter | lihat teks siap tempel di bawah |
 | *Your client user interface screenshot* | maks 10 file, < 6 MB | Pesanan & Pengiriman, Stok Gudang, Scan Resi (kamera aktif), Laporan Keuangan |
 
@@ -137,12 +136,13 @@ stock counter), arranges shipment to obtain tracking numbers, prints labels, and
 report. Used only by our own shop, not offered to third parties.
 ```
 
-### Brief Introduction — versi Indonesia (untuk pemahaman Anda)
-
-> "E-Fulfill Hub adalah sistem gudang dan pesanan internal toko Shopee kami sendiri. Sistem menyinkronkan
-> pesanan dan rincian pembayaran milik toko kami, menjaga stok gudang akurat dengan pencatatan batch FIFO
-> (tidak memakai angka stok Shopee), mengatur pengiriman untuk mendapatkan nomor resi, mencetak label, dan
-> menyusun laporan keuangan sederhana. Hanya dipakai toko kami sendiri, tidak diberikan ke pihak lain."
+```
+E-Fulfill Hub adalah sistem gudang dan pesanan internal toko Shopee saya. Sistem menyinkronkan
+pesanan dan rincian pembayaran toko, menjaga stok gudang akurat dengan pencatatan batch FIFO
+(tidak memakai angka stok Shopee), mengatur pengiriman untuk mendapatkan nomor resi, mencetak
+label, dan menyusun laporan keuangan sederhana. Dipakai untuk toko saya sendiri, tidak diberikan
+ke pihak lain.
+```
 
 ---
 
@@ -160,7 +160,7 @@ report. Used only by our own shop, not offered to third parties.
 
 Isi salah satu (dokumen resmi: *"strongly encouraged to use static IP addresses"*):
 
-- **IP address(es) available** → tulis IP publik server aplikasi Anda (paling dianjurkan).
+- **IP address(es) available** → tulis IP publik server aplikasi saya (paling dianjurkan).
 - **IP address(es) unavailable** → isi alasan (maks 200 karakter), contoh siap tempel:
 
 ```
@@ -175,7 +175,7 @@ change without notice. Data is stored in our own MySQL database and is not share
 1. Di Console: ambil **Live Partner ID** dan **Live Key** (bagian *App Key*).
 2. Di aplikasi (menu **Hubungkan Shopee**): ganti **Partner ID** dan **Partner Key** ke nilai Live, ubah
    **Mode Aplikasi** ke **Produksi**, lalu klik **"Uji Koneksi ke Shopee"**.
-3. Otorisasi ulang toko asli Anda (setelah Live, toko asli boleh diotorisasi).
+3. Otorisasi ulang toko asli saya (setelah Live, toko asli boleh diotorisasi).
 4. (Opsional) Aktifkan **Push Mechanism** di lingkungan produksi.
 5. (Opsional) Whitelist IP Shopee lewat API `v2.public.get_shopee_ip_ranges` (lingkungan produksi).
 

@@ -12,7 +12,7 @@ sisa pekerjaan. Dokumen lain di repo:
 | `docs/riwayat-pengujian.md` | riwayat pengujian & bukti verifikasi |
 
 Selain itu **tidak ada** dokumen lain. Kalau ada informasi baru, tambahkan ke
-salah satu berkas di atas — jangan membuat berkas baru.
+salah satu berkas di atas, bukan berkas baru.
 
 Terakhir diperbarui: 2026-10-28.
 
@@ -314,7 +314,7 @@ lanjut ke cycle berikutnya.
       dipakai `/api/v1/shipments`, `/api/v1/returns`, `/api/v1/orders`.
       Terverifikasi di produksi: `status=ALL` = 191 = tanpa filter.
 
-## 6. Aturan kerja (untuk agen & editor)
+## 6. Aturan kerja (untuk editor kode)
 
 1. Domain murni di `src/modules/*/domain` — tanpa Prisma, tanpa HTTP; wajib ada test.
 2. Usecase memegang transaksi; route hanya memvalidasi input + izin.
@@ -325,4 +325,4 @@ lanjut ke cycle berikutnya.
    `npm run build`. Berat: `npm run test:integration` sebelum rilis.
 6. Deploy: `VPS_PASS=... uv run --with paramiko python scripts/vps-deploy-paramiko.py deploy`.
    Jangan memakai `ssh`/`scp` biasa (kunci publik ditolak server).
-7. Jangan menambah berkas dokumentasi baru. Perbarui berkas di tabel atas.
+7. Dokumentasi hanya di berkas yang tercantum di tabel atas. Perbarui berkas itu, jangan buat berkas baru.

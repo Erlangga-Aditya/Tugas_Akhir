@@ -156,8 +156,8 @@ MySQL 8.4, Nginx, PM2+logrotate, ufw, WIB, binlog 2 hari) → salin
 Verifikasi: 31/31 tabel jumlah baris identik. **VPS lama dipertahankan sebagai
 cadangan** (app di-`pm2 stop`, MySQL hidup, data utuh).
 
-Hal yang WAJIB dilakukan pemilik di **Shopee Open Platform Console** setelah
-migrasi (tidak bisa lewat API):
+Hal yang saya lakukan di **Shopee Open Platform Console** setelah migrasi
+(tidak bisa lewat API):
 
 1. **App list → IP Address Whitelist → tambah `45.126.43.98`.** Tanpa ini,
    panggilan ambil resi (`logistics/get_tracking_number`) ditolak dengan error
@@ -202,7 +202,7 @@ ke endpoint callback — tanpa itu kode otorisasi hilang di halaman depan.
 
 ## 8. Pesanan batal ≠ "Gagal kirim" (migrasi 2026-10-28)
 
-**Gejala yang dilaporkan pemilik toko:** pesanan yang dibatalkan muncul di
+**Gejala yang saya temukan:** pesanan yang dibatalkan muncul di
 halaman **Lacak Kiriman** dengan status **Gagal kirim**, dan kartu pesanannya
 memakai badge merah `Gagal kirim`.
 

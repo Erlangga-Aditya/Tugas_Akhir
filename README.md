@@ -19,8 +19,6 @@ Produksi: `https://maktabah313.web.id` (VPS `45.126.43.98`,
 | `docs/pengajuan-go-live-shopee.md` | draf isian pengajuan Go Live Shopee |
 | `docs/riwayat-pengujian.md` | riwayat pengujian sistem |
 
-Jangan menambah berkas dokumentasi baru — perbarui salah satu di atas.
-
 ## Menjalankan lokal
 
 ```bash

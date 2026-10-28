@@ -25,7 +25,7 @@ diperbarui otomatis. Bisa diganti ke domain sendiri kapan saja, lihat bagian 4.)
 
 ## 2. Memperbarui aplikasi setelah ada perubahan kode
 
-Dari komputer Anda (folder proyek):
+Dari komputer saya (folder proyek):
 
 ```bash
 SSHPASS='<sandi root>' VPS_HOST=103.178.174.224 \
@@ -138,7 +138,7 @@ Setelah itu pesanan asli akan masuk otomatis (sinkronisasi tiap 60 detik + notif
    ```
 2. Dianjurkan memakai **kunci SSH** dan mematikan login sandi:
    ```bash
-   ssh-keygen -t ed25519            # dari komputer Anda
+   ssh-keygen -t ed25519            # dari komputer saya
    ssh-copy-id root@103.178.174.224
    # lalu di server: /etc/ssh/sshd_config → PasswordAuthentication no
    systemctl restart ssh
@@ -168,7 +168,7 @@ Setelah itu pesanan asli akan masuk otomatis (sinkronisasi tiap 60 detik + notif
 | Berkas | Fungsi |
 |---|---|
 | `deploy/setup-vps.sh` | Instalasi dasar server (Node, MySQL, Nginx, Certbot, PM2, firewall) |
-| `deploy/remote_deploy.py` | Deployment otomatis end-to-end dari komputer Anda |
+| `deploy/remote_deploy.py` | Deployment otomatis end-to-end dari komputer saya |
 | `deploy/nginx-efulfill.conf` | Konfigurasi Nginx (termasuk setelan khusus SSE/realtime) |
 | `deploy/vps_survey.py` | Memeriksa kondisi server (OS, RAM, layanan terpasang) |
 | `prisma/seed-production.ts` | Membuat akun pemilik + gudang tanpa data contoh |
