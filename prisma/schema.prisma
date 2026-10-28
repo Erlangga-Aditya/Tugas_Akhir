@@ -530,6 +530,8 @@ model FulfillmentOrder {
   @@index([orderId])
   @@index([warehouseId])
   @@index([status])
+  @@index([packedAt])
+  @@index([handedOverAt])
   @@map("fulfillment_orders")
 }
 

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, useMemo } from 'react';
 import { RefreshCw, Search, BookOpen, Layers } from 'lucide-react';
 import { api, formatDate } from '@/lib/api';
 import { PageHeader, StatusBadge, LoadingState, ErrorState, EmptyState } from '@/components/ui';
+import RekapKerjaStafSection from './rekap-kerja-staf';
 
 interface Movement {
   id: string;
@@ -113,6 +114,9 @@ export default function LaporanPage() {
           </div>
         )}
       </div>
+
+      {/* Rekap Kerja Staf — laporan kinerja staf per minggu gaji */}
+      <RekapKerjaStafSection />
 
       {/* Movements Table Section */}
       <div className="card">
