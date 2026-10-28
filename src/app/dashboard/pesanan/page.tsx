@@ -1029,19 +1029,19 @@ export default function PesananPengirimanPage() {
             type="button"
             className={`btn btn-sm ${sort === 'oldest' ? 'btn-primary' : 'btn-secondary'}`}
             onClick={() => changeSort('oldest')}
-            title="Pesanan yang paling lama menunggu ditampilkan lebih dulu"
+            title="Pesanan dengan tenggat pengiriman terdekat ditampilkan lebih dulu"
           >
             <ArrowUpWideNarrow size={13} aria-hidden />
-            <span>Terlama dulu</span>
+            <span>Tenggat terdekat</span>
           </button>
           <button
             type="button"
             className={`btn btn-sm ${sort === 'newest' ? 'btn-primary' : 'btn-secondary'}`}
             onClick={() => changeSort('newest')}
-            title="Pesanan terbaru ditampilkan lebih dulu"
+            title="Pesanan dengan tenggat pengiriman terjauh ditampilkan lebih dulu"
           >
             <ArrowDownWideNarrow size={13} aria-hidden />
-            <span>Terbaru dulu</span>
+            <span>Tenggat terjauh</span>
           </button>
         </div>
       </div>
