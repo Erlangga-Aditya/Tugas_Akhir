@@ -8,10 +8,11 @@ sisa pekerjaan. Dokumen lain di repo:
 | `README.md` | cara menjalankan, menguji, dan men-deploy |
 | `deploy/RUNBOOK-OPERASIONAL.md` | prosedur darurat VPS (disk, migrasi, status) |
 | `docs/panduan-operator.md` | panduan pemakaian untuk operator gudang |
-| `CLAUDE.md` / `AGENTS.md` | aturan kerja untuk agen/editor kode |
+| `docs/pengajuan-go-live-shopee.md` | draf isian pengajuan Go Live Shopee |
+| `docs/riwayat-pengujian.md` | riwayat pengujian & bukti verifikasi |
 
 Selain itu **tidak ada** dokumen lain. Kalau ada informasi baru, tambahkan ke
-salah satu dari empat berkas di atas — jangan membuat berkas baru.
+salah satu berkas di atas — jangan membuat berkas baru.
 
 Terakhir diperbarui: 2026-10-28.
 
