@@ -16,7 +16,8 @@ Produksi: `https://maktabah313.web.id` (VPS `45.126.43.98`,
 | **`docs/ROADMAP.md`** | tujuan, keputusan, status, roadmap & task — **satu-satunya sumber kebenaran** |
 | `deploy/RUNBOOK-OPERASIONAL.md` | prosedur darurat VPS (disk penuh, migrasi gagal, aturan status) |
 | `docs/panduan-operator.md` | panduan pemakaian untuk operator gudang |
-| `CLAUDE.md`, `AGENTS.md` | aturan kerja untuk agen/editor kode |
+| `docs/pengajuan-go-live-shopee.md` | draf isian pengajuan Go Live Shopee |
+| `docs/riwayat-pengujian.md` | riwayat pengujian sistem |
 
 Jangan menambah berkas dokumentasi baru — perbarui salah satu di atas.
 
