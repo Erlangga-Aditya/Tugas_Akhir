@@ -238,6 +238,24 @@ export function extractSupportedChannels(res: unknown): ShippingChannel[] {
   // boleh memakai `dropoff`. Tanpa cabang ini, pesanan seperti itu selalu
   // ditolak Shopee walaupun kanalnya jelas tersedia.
   const infoNeeded = readInfoNeeded(root, inner);
+
+  // 3b) DROP-OFF TANPA CABANG — `info_needed: { "dropoff": [] }`.
+  //
+  // Bukti produksi (order 261027QHEBBY8Q, 2026-10-29):
+  //   { "info_needed": { "dropoff": [] }, "dropoff": { "branch_list": null } }
+  //
+  // Artinya Shopee mendukung drop-off dan TIDAK meminta parameter tambahan
+  // (tidak perlu memilih cabang). Versi lama hanya membuat kanal drop-off bila
+  // ada `branch_id`, sehingga jawaban seperti ini dianggap "tidak ada kanal
+  // yang didukung" — operator melihat "resi belum bisa diminta" padahal di
+  // Seller Centre "Atur Pengiriman" berjalan normal.
+  //
+  // Kunci `info_needed` inilah kontrak resminya, bukan ada/tidaknya daftar
+  // cabang. Kanal hanya ditambahkan bila belum ada drop-off dari daftar cabang.
+  if (infoNeeded.has('dropoff') && !channels.some((c) => c.kind === 'dropoff')) {
+    channels.push({ kind: 'dropoff', label: 'Drop-off' });
+  }
+
   if (infoNeeded.has('non_integrated')) {
     channels.push({
       kind: 'non_integrated',

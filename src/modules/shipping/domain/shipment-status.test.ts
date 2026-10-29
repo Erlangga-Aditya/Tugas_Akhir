@@ -58,6 +58,24 @@ describe('mapOrderStatusToShipment', () => {
     expect(mapOrderStatusToShipment(undefined)).toBeNull();
     expect(mapOrderStatusToShipment('')).toBeNull();
   });
+
+  /**
+   * Regresi bug produksi: "Ambil Resi berhasil tetapi resi tidak muncul".
+   *
+   * `arrangeShipmentForOrder` dulu memanggil
+   * `upsertShipment(..., 'LOGISTICS_REQUEST_CREATED')`. Itu status LOGISTIK,
+   * sedangkan fungsi pemetaan ini hanya mengenal status PESANAN. Hasilnya
+   * `null` → baris `shipments` tidak pernah dibuat, sehingga AWB yang sudah
+   * diterbitkan Shopee tidak tampil di aplikasi.
+   *
+   * Test ini mengunci perilaku mapper sekaligus menjadi pengingat: JANGAN
+   * mengirim status logistik ke sini. Simpan AWB lewat jalur yang menulis
+   * status paket secara eksplisit (`saveArrangedShipment`).
+   */
+  it('status LOGISTIK bukan status pesanan (penyebab resi tidak tersimpan)', () => {
+    expect(mapOrderStatusToShipment('LOGISTICS_REQUEST_CREATED')).toBeNull();
+    expect(mapOrderStatusToShipment('LOGISTICS_READY')).toBeNull();
+  });
 });
 
 describe('kelompok status paket', () => {

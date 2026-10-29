@@ -615,6 +615,156 @@ describe('ShopeeAdapter', () => {
       const calledUrls = fetchMock.mock.calls.map((c) => String(c[0]));
       expect(calledUrls.some((u) => u.includes('ship_order'))).toBe(false);
     });
+
+    /**
+     * Regresi bug produksi: "resi tidak muncul walau sudah diambil".
+     *
+     * `get_shipping_parameter` dijawab Shopee dengan
+     *   `[error_other] Package OFG… not eligible for rescheduling`
+     * ketika paket SUDAH punya jadwal kirim. Versi lama melempar galat itu
+     * sebagai kegagalan, padahal resinya sudah terbit di Shopee.
+     */
+    it('mengambil resi saat ship_order ditolak karena paket sudah dikirim', async () => {
+      const fetchMock = vi
+        .fn()
+        // 1) Kanal tersedia (dropoff).
+        .mockResolvedValueOnce({
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              error: '',
+              message: '',
+              response: { shipping_document_list: [{ dropoff_branch_list: [{ branch_id: 'BR-77' }] }] },
+            }),
+        })
+        // 2) ship_order ditolak: paket sudah pernah dikirim.
+        .mockResolvedValueOnce({
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              error: 'logistics.package_already_shipped',
+              message: 'Package already shipped.',
+              request_id: 'req_shipped',
+            }),
+        })
+        // 3) Resi ternyata sudah terbit.
+        .mockResolvedValueOnce({
+          status: 200,
+          text: async () => JSON.stringify({ error: '', response: { tracking_number: 'SPX123456789' } }),
+        });
+
+      global.fetch = fetchMock;
+
+      const result = await adapter.arrangeShipment(creds, { orderSn: '240921ORDER001' });
+
+      expect(result.success).toBe(true);
+      expect(result.trackingNumber).toBe('SPX123456789');
+    });
+
+    it('mengambil resi saat Shopee menolak menjadwalkan ulang (not eligible for rescheduling)', async () => {
+      const fetchMock = vi
+        .fn()
+        // 1) get_shipping_parameter → ditolak karena paket sudah terjadwal.
+        .mockResolvedValueOnce({
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              error: 'error_other',
+              message: 'Package OFG246543763262710 not eligible for rescheduling.',
+              request_id: 'req_resched',
+            }),
+        })
+        // 2) Resi ternyata sudah terbit.
+        .mockResolvedValueOnce({
+          status: 200,
+          text: async () => JSON.stringify({ error: '', response: { tracking_number: 'SPX777888999' } }),
+        });
+
+      global.fetch = fetchMock;
+
+      const result = await adapter.arrangeShipment(creds, {
+        orderSn: '240921ORDER001',
+        packageNumber: 'OFG246543763262710',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.trackingNumber).toBe('SPX777888999');
+    });
+
+    it('memberi pesan yang bisa ditindaklanjuti saat paket sudah terjadwal tetapi resi belum terbit', async () => {
+      const fetchMock = vi
+        .fn()
+        // 1) get_shipping_parameter → ditolak karena paket sudah terjadwal.
+        .mockResolvedValueOnce({
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              error: 'error_other',
+              message: 'Package OFG246543763262710 not eligible for rescheduling.',
+              request_id: 'req_resched',
+            }),
+        })
+        // 2–3) Pemeriksaan resi setelah penolakan tetap kosong.
+        .mockResolvedValue({
+          status: 200,
+          text: async () => JSON.stringify({ error: '', response: { tracking_number: '' } }),
+        });
+
+      global.fetch = fetchMock;
+
+      const result = await adapter.arrangeShipment(creds, {
+        orderSn: '240921ORDER001',
+        packageNumber: 'OFG246543763262710',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.trackingNumber).toBeNull();
+      expect(result.message).toContain('Seller Centre');
+      expect(result.message).toContain('sudah pernah dijadwalkan');
+    });
+
+    /**
+     * Regresi PRODUKSI 2026-10-29 (order 261027QHEBBY8Q, toko 275991637).
+     *
+     * Shopee menjawab `info_needed: { dropoff: [] }` + `dropoff.branch_list:
+     * null` — drop-off didukung TANPA cabang. `ship_order` harus mengirim
+     * `dropoff: {}` (bukan `pickup`, bukan `non_integrated`), lalu AWB diambil.
+     */
+    it('mengirim ship_order dropoff kosong saat Shopee tidak meminta cabang', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce({
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              error: '',
+              message: '',
+              response: { info_needed: { dropoff: [] }, dropoff: { branch_list: null } },
+            }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          text: async () => JSON.stringify({ error: '', message: '', response: {} }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          text: async () =>
+            JSON.stringify({ error: '', response: { tracking_number: 'OFG246809009243506' } }),
+        });
+
+      global.fetch = fetchMock;
+
+      const result = await adapter.arrangeShipment(creds, { orderSn: '261027QHEBBY8Q' });
+
+      expect(result.success).toBe(true);
+      expect(result.trackingNumber).toBe('OFG246809009243506');
+
+      const body = JSON.parse((fetchMock.mock.calls[1] as [string, RequestInit])[1].body as string);
+      expect(body.order_sn).toBe('261027QHEBBY8Q');
+      expect(body.dropoff).toEqual({});
+      expect(body.pickup).toBeUndefined();
+      expect(body.non_integrated).toBeUndefined();
+    });
   });
 
   describe('HTTP Method validation (GET vs POST)', () => {
