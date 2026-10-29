@@ -300,6 +300,36 @@ export function mapShopeeOrderStatus(status: string): string {
 // ShopeeAdapter — implements MarketplaceAdapter port
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Apakah pesan galat Shopee berarti "paket ini SUDAH pernah dijadwalkan"?
+ *
+ * Shopee menolak permintaan penjadwalan ulang sebuah paket yang sudah punya
+ * jadwal kirim. Daftar di bawah diambil dari `error_list` resmi
+ * `v2.logistics.get_shipping_parameter` (docs/shopee-raw/endpoints/550.json):
+ *
+ *   - `error_param`  → "Package cannot be rescheduled"
+ *   - `error_other`  → "Rescheduling dependency error"
+ *   - `error_param`  → "Shipping parameters can only be obtained when package
+ *                       is ready to be shipped"
+ *
+ * dan dari `v2.logistics.ship_order` untuk paket yang sudah dikirim.
+ *
+ * Galat seperti ini BUKAN kegagalan murni: biasanya artinya Shopee sudah
+ * menerbitkan resi, sehingga yang benar dilakukan adalah MENGAMBIL resi itu —
+ * bukan melaporkan "resi belum berhasil dibuat" kepada operator.
+ */
+export function isAlreadyArrangedError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes('not eligible for rescheduling') ||
+    m.includes('cannot be rescheduled') ||
+    m.includes('rescheduling dependency error') ||
+    m.includes('package_already_shipped') ||
+    m.includes('already been shipped') ||
+    m.includes('already shipped')
+  );
+}
+
 export class ShopeeAdapter implements MarketplaceAdapter {
   readonly provider = 'shopee';
 
@@ -1128,6 +1158,36 @@ export class ShopeeAdapter implements MarketplaceAdapter {
 
   async arrangeShipment(creds: ShopCredentials, input: ArrangeShipmentInput): Promise<ArrangeShipmentResult> {
     const cfg = await this.cfg();
+
+    /**
+     * Ambil resi yang MUNGKIN sudah diterbitkan Shopee.
+     *
+     * Dipakai sebagai langkah 0 dan sebagai jalan keluar saat Shopee menolak
+     * menjadwalkan ulang. `getTrackingNumber` menelan galatnya sendiri (return
+     * null), jadi aman dipanggil kapan pun tanpa mengubah hasil akhir.
+     */
+    const resiYangAda = async (): Promise<string | null> => {
+      try {
+        return await this.getTrackingNumber(creds, input.orderSn, input.packageNumber);
+      } catch {
+        return null;
+      }
+    };
+
+    /** Minta parameter pengiriman; `package_number` hanya bila memang ada. */
+    const mintaParameter = (packageNumber?: string) =>
+      callShopee<unknown>(
+        cfg,
+        '/api/v2/logistics/get_shipping_parameter',
+        {
+          method: 'GET',
+          params: packageNumber
+            ? { order_sn: input.orderSn, package_number: packageNumber }
+            : { order_sn: input.orderSn },
+        },
+        { shopId: creds.shopId, accessToken: creds.accessToken },
+      );
+
     try {
       // 1) Tanya Shopee channel apa yang didukung pesanan ini.
       // 1) Tanya Shopee channel apa yang didukung pesanan ini.
@@ -1142,43 +1202,56 @@ export class ShopeeAdapter implements MarketplaceAdapter {
       // dan `get_shipping_parameter` menolak paket yang pernah di-ship_order
       // dengan `Package ... not eligible for rescheduling` — keduanya membuat
       // operator terjebak tanpa jalan keluar.
-      const paramArgs = {
-        shopId: creds.shopId,
-        accessToken: creds.accessToken,
-      } as const;
-
       let paramRes: unknown;
       if (input.packageNumber) {
-        paramRes = await callShopee<unknown>(
-          cfg,
-          '/api/v2/logistics/get_shipping_parameter',
-          { method: 'GET', params: { order_sn: input.orderSn, package_number: input.packageNumber } },
-          paramArgs,
-        );
-        // Kalau paket tidak bisa dijadwalkan ulang, Shopee menolak di tahap ini.
-        // Coba lagi TANPA `package_number` — untuk pesanan satu paket itu justru
-        // bentuk yang benar, dan channel tetap bisa ditemukan.
+        // `package_number` bisa DITOLAK Shopee walau paketnya benar-benar
+        // dipecah: paket yang sudah terjadwal dijawab
+        //   `[error_other] Package … not eligible for rescheduling`.
+        // Dulu galat itu langsung dilempar, sehingga percobaan ulang TANPA
+        // `package_number` di bawah tidak pernah dijalankan — padahal untuk
+        // pesanan satu paket justru bentuk itulah yang benar.
+        try {
+          paramRes = await mintaParameter(input.packageNumber);
+        } catch (paramErr) {
+          const pesan = (paramErr as Error).message;
+          if (isAlreadyArrangedError(pesan)) {
+            const awb = await resiYangAda();
+            if (awb) {
+              logger.info(`arrangeShipment: paket ${input.orderSn} sudah terjadwal, resi diambil`, {
+                shopId: creds.shopId,
+                awb,
+              });
+              return { success: true, trackingNumber: awb };
+            }
+            // Paket sudah terjadwal: mengulang tanpa `package_number` tidak akan
+            // mengubah apa pun. Teruskan galat ASLINYA supaya operator menerima
+            // pesan yang menunjuk ke Seller Centre, bukan pesan "kanal kosong".
+            throw paramErr;
+          }
+          paramRes = await mintaParameter().catch(() => {
+            throw paramErr;
+          });
+        }
+        // Kanal kosong (tanpa galat) juga layak dicoba ulang tanpa package_number.
         if (extractSupportedChannels(paramRes).length === 0) {
-          const retry = await callShopee<unknown>(
-            cfg,
-            '/api/v2/logistics/get_shipping_parameter',
-            { method: 'GET', params: { order_sn: input.orderSn } },
-            paramArgs,
-          );
-          if (extractSupportedChannels(retry).length > 0) paramRes = retry;
+          try {
+            const retry = await mintaParameter();
+            if (extractSupportedChannels(retry).length > 0) paramRes = retry;
+          } catch {
+            /* biarkan kanal kosong ditangani di bawah */
+          }
         }
       } else {
-        paramRes = await callShopee<unknown>(
-          cfg,
-          '/api/v2/logistics/get_shipping_parameter',
-          { method: 'GET', params: { order_sn: input.orderSn } },
-          paramArgs,
-        );
+        paramRes = await mintaParameter();
       }
       const channels = extractSupportedChannels(paramRes);
       if (channels.length === 0) {
+        // Cetak jawaban mentahnya. Tanpa ini, pesan "tidak ada kanal" tidak
+        // bisa ditindaklanjuti: operator tidak tahu apakah Shopee menjawab
+        // `info_needed` yang tidak kita kenali, atau memang menolak.
         logger.warn(`Tidak ada kanal pengiriman yang didukung untuk order ${input.orderSn}`, {
           shopId: creds.shopId,
+          jawabanShopee: JSON.stringify(paramRes).slice(0, 1500),
         });
         throw describeNoChannel(input.orderSn);
       }
@@ -1283,6 +1356,37 @@ export class ShopeeAdapter implements MarketplaceAdapter {
       return { success: true, trackingNumber };
     } catch (err) {
       const msg = (err as Error).message;
+
+      // Sebelum menyatakan gagal, pastikan Shopee memang BELUM punya resi.
+      //
+      // Kegagalan "tidak boleh dijadwalkan ulang" justru bukti paket sudah
+      // terjadwal. Kalau resinya ternyata sudah terbit (mis. ship_order berhasil
+      // pada percobaan sebelumnya tetapi pengambilan resi kehabisan waktu),
+      // laporkan SUKSES dengan resi yang nyata — bukan menyuruh operator
+      // mengulang aksi yang akan gagal lagi.
+      if (isAlreadyArrangedError(msg)) {
+        const awb = await resiYangAda();
+        if (awb) {
+          logger.info(`arrangeShipment: paket ${input.orderSn} sudah terjadwal, resi diambil`, {
+            shopId: creds.shopId,
+            awb,
+          });
+          return { success: true, trackingNumber: awb };
+        }
+        logger.warn(`arrangeShipment: paket ${input.orderSn} sudah terjadwal tetapi resi belum terbit`, {
+          shopId: creds.shopId,
+        });
+        return {
+          success: false,
+          trackingNumber: null,
+          message:
+            `Shopee menolak menjadwalkan ulang paket ini karena paket sudah pernah dijadwalkan/dikirim, ` +
+            `tetapi nomor resinya belum terbaca. Buka pesanan ini di Seller Centre Shopee: ` +
+            `kalau resinya sudah ada, paket cukup discan/dicetak labelnya; kalau belum, hubungi CS Shopee. ` +
+            `(${msg})`,
+        };
+      }
+
       logger.error(`arrangeShipment gagal untuk order ${input.orderSn}: ${msg}`, { shopId: creds.shopId });
       return { success: false, trackingNumber: null, message: msg };
     }

@@ -48,10 +48,12 @@ const REAL_SANDBOX_RESPONSE = {
 describe('bentuk resmi respons kanal Shopee (time_slot_list)', () => {
   it('membaca kanal pickup dari address_list[].time_slot_list', () => {
     const channels = extractSupportedChannels(REAL_SANDBOX_RESPONSE);
+    const pickup = channels.filter((c) => c.kind === 'pickup');
 
-    expect(channels.length).toBe(3);
-    expect(channels.every((c) => c.kind === 'pickup')).toBe(true);
-    expect(channels[0]!.pickupTimeId).toBe('1790499600');
+    // `info_needed` memuat pickup DAN dropoff; slot pickup tetap terbaca semua.
+    expect(pickup.length).toBe(3);
+    expect(channels.length).toBe(4); // 3 pickup + 1 dropoff tanpa cabang
+    expect(pickup[0]!.pickupTimeId).toBe('1790499600');
   });
 
   it('membawa address_id karena Shopee menandainya wajib', () => {
@@ -70,13 +72,16 @@ describe('bentuk resmi respons kanal Shopee (time_slot_list)', () => {
     expect(recommended[0]!.pickupTimeId).toBe('1790499600');
   });
 
-  it('tidak gagal hanya karena dropoff branch_list bernilai null', () => {
-    // `branch_list: null` adalah hal normal saat toko belum mengatur cabang
-    // dropoff. Kanal pickup tetap harus terbaca.
+  it('dropoff branch_list null tetap menghasilkan kanal drop-off tanpa cabang', () => {
+    // `branch_list: null` berarti Shopee TIDAK meminta pemilihan cabang —
+    // drop-off tetap didukung (`info_needed.dropoff` ada). Dulu jawaban ini
+    // dianggap "tidak ada kanal drop-off", sehingga pesanan tanpa slot jemput
+    // tidak bisa dimintakan resi sama sekali.
     const channels = extractSupportedChannels(REAL_SANDBOX_RESPONSE);
+    const dropoff = channels.filter((c) => c.kind === 'dropoff');
 
-    expect(channels.some((c) => c.kind === 'dropoff')).toBe(false);
-    expect(channels.length).toBeGreaterThan(0);
+    expect(dropoff).toHaveLength(1);
+    expect(dropoff[0]!.branchId).toBeUndefined();
   });
 
   it('pickChannel memilih slot recommended untuk pengiriman otomatis', () => {
@@ -263,5 +268,41 @@ describe('kanal non-integrasi (info_needed.non_integrated)', () => {
     };
     const channels = extractSupportedChannels(campuran);
     expect(pickChannel(channels)?.kind).toBe('pickup');
+  });
+
+  /**
+   * Regresi PRODUKSI 2026-10-29, order 261027QHEBBY8Q (toko 275991637).
+   *
+   * Shopee menjawab persis:
+   *   { "info_needed": { "dropoff": [] }, "dropoff": { "branch_list": null } }
+   *
+   * `info_needed.dropoff` menyatakan drop-off DIDUKUNG dan tidak butuh
+   * parameter tambahan. Versi lama menuntut adanya `branch_id`, sehingga
+   * jawaban ini dianggap "tidak ada kanal" dan resi tidak pernah bisa diminta.
+   */
+  it('mengenali drop-off tanpa cabang dari info_needed (bukti produksi 2026-10-29)', () => {
+    const jawabanShopee = {
+      info_needed: { dropoff: [] },
+      dropoff: { branch_list: null },
+    };
+
+    const channels = extractSupportedChannels(jawabanShopee);
+
+    expect(channels).toHaveLength(1);
+    expect(channels[0]!.kind).toBe('dropoff');
+    expect(channels[0]!.branchId).toBeUndefined();
+    expect(pickChannel(channels)?.kind).toBe('dropoff');
+  });
+
+  it('tidak menggandakan kanal drop-off bila daftar cabang memang ada', () => {
+    const jawabanShopee = {
+      info_needed: { dropoff: [] },
+      dropoff: { branch_list: [{ branch_id: 'BR-9', branch_name: 'Agen' }] },
+    };
+
+    const channels = extractSupportedChannels(jawabanShopee);
+
+    expect(channels).toHaveLength(1);
+    expect(channels[0]!.branchId).toBe('BR-9');
   });
 });

@@ -1621,7 +1621,7 @@ export async function arrangeShipmentForOrder(
   }
 
   if (success && trackingNumber) {
-    await upsertShipment(tenantId, orderId, trackingNumber, null, 'LOGISTICS_REQUEST_CREATED');
+    await saveArrangedShipment(tenantId, orderId, trackingNumber, null);
     logger.info(`Pengiriman diatur: order ${order.externalOrderId}, AWB ${trackingNumber}`);
     broadcastSystemEvent('awb:updated', { orderId, awb: trackingNumber });
   }
@@ -2049,8 +2049,59 @@ async function handlePackageFulfillmentPush(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Upsert a Shipment record for a given order.
+ * Simpan AWB hasil "Atur Pengiriman" ke tabel `shipments`.
+ *
+ * KENAPA FUNGSI INI ADA — bug produksi:
+ * `arrangeShipmentForOrder` dulu memanggil `upsertShipment(..., 'LOGISTICS_REQUEST_CREATED')`.
+ * Argumen itu adalah status LOGISTIK, sedangkan `upsertShipment` memetakan status
+ * PESANAN lewat `mapOrderStatusToShipment`, yang tidak mengenal
+ * `LOGISTICS_REQUEST_CREATED` dan mengembalikan `null`. Karena `null` berarti
+ * "jangan menulis apa pun", baris `shipments` TIDAK PERNAH dibuat — sehingga
+ * resi yang sudah diterbitkan Shopee tidak muncul di aplikasi (operator melihat
+ * "belum ada resi" padahal resinya ada).
+ *
+ * Di sini status paket ditulis EKSPLISIT: paket yang baru diatur pengirimannya
+ * berstatus `READY_TO_SHIP`. Status yang sudah lebih maju tidak pernah diturunkan.
  */
+export async function saveArrangedShipment(
+  tenantId: string,
+  orderId: string,
+  awb: string,
+  carrier: string | null,
+) {
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, tenantId },
+    select: { id: true },
+  });
+  if (!order) throw new NotFoundError('Pesanan', orderId);
+
+  const existing = await prisma.shipment.findFirst({ where: { orderId } });
+  if (existing) {
+    await prisma.shipment.update({
+      where: { id: existing.id },
+      data: {
+        awb: awb || existing.awb,
+        carrier: carrier ?? existing.carrier,
+        // Hanya maju. Paket yang sudah dijemput/diterima tidak boleh mundur
+        // menjadi "siap dikirim" hanya karena resi dibaca ulang.
+        ...(shouldAdvanceShipmentStatus(existing.status, 'READY_TO_SHIP')
+          ? { status: 'READY_TO_SHIP' }
+          : {}),
+      },
+    });
+    return;
+  }
+
+  await prisma.shipment.create({
+    data: {
+      orderId,
+      awb,
+      carrier,
+      status: 'READY_TO_SHIP',
+    },
+  });
+}
+
 async function upsertShipment(
   tenantId: string,
   orderId: string,
@@ -2066,7 +2117,22 @@ async function upsertShipment(
   const status = mapOrderStatusToShipment(rawStatus);
   // `null` = status pesanan ini tidak menyimpulkan apa pun tentang paket
   // (mis. belum dibayar / pembatalan baru diajukan). Jangan menulis tebakan.
-  if (!status) return;
+  if (!status) {
+    // JEBAKAN YANG PERNAH TERJADI: pemanggil mengirim status LOGISTIK
+    // (`LOGISTICS_REQUEST_CREATED`, `LOGISTICS_READY`, …) ke fungsi yang
+    // memetakan status PESANAN. Hasilnya `null` → tidak ada yang ditulis, dan
+    // resi yang sudah diterbitkan Shopee hilang tanpa jejak di aplikasi.
+    //
+    // Fungsi ini SENGAJA tidak menebak status paket, tetapi pemakaian yang
+    // salah harus TERLIHAT di log — bukan hilang diam-diam.
+    if (/^LOGISTICS_/i.test(rawStatus)) {
+      logger.warn('upsertShipment menerima status LOGISTIK, bukan status pesanan — tidak ada yang ditulis', {
+        orderId,
+        rawStatus,
+      });
+    }
+    return;
+  }
   const existing = await prisma.shipment.findFirst({ where: { orderId } });
 
   if (existing) {
