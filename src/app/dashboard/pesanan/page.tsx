@@ -24,14 +24,12 @@ import {
 } from 'lucide-react';
 import { api, openOfficialLabel } from '@/lib/api';
 import { usePermission } from '@/hooks/usePermission';
-import { OperasionalSectionPesanan } from './operasional-section';
 import { BarcodeScanner, playScanFeedback } from '@/components/barcode-scanner';
 import { Alert, EmptyState, ErrorState, LoadingState, PageHeader } from '@/components/ui';
 import { StockPanel } from '@/components/stock-panel';
 import { RANGE_LABEL, RANGE_PRESETS, type RangePreset } from '@/modules/fulfillment/domain/date-range';
 import type { QueueBucket } from '@/modules/fulfillment/domain/work-queue';
 import type { ExceptionKategori } from '@/modules/fulfillment/domain/order-exceptions';
-import type { TahapOperasional } from '@/modules/reports/domain/operation-metrics';
 import { OrderCard } from './order-card';
 import { type ScanOutcome, type StationOrder, type StationResponse } from './types';
 
@@ -117,8 +115,6 @@ export default function PesananPengirimanPage() {
   const [bucket, setBucket] = useState<QueueBucket>('perluDiproses');
   /** Saringan "perlu perhatian": pembatalan / keterlambatan. */
   const [kategori, setKategori] = useState<ExceptionKategori | null>(null);
-  /** Saringan tahap gudang (bukti klik kartu Ringkasan Operasional). */
-  const [tahap, setTahap] = useState<TahapOperasional | null>(null);
   const [range, setRange] = useState<RangePreset>('all');
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState('');
@@ -148,7 +144,6 @@ export default function PesananPengirimanPage() {
       page: number;
       search: string;
       kategori?: ExceptionKategori | null;
-      tahap?: TahapOperasional | null;
     }) => {
       const params = new URLSearchParams({
         sort: opts.sort,
@@ -158,7 +153,6 @@ export default function PesananPengirimanPage() {
       });
       if (opts.search.trim()) params.set('search', opts.search.trim());
       if (opts.kategori) params.set('kategori', opts.kategori);
-      if (opts.tahap) params.set('tahap', opts.tahap);
       return `/api/v1/fulfillment/station?${params.toString()}`;
     },
     [],
@@ -173,7 +167,6 @@ export default function PesananPengirimanPage() {
         page?: number;
         search?: string;
         kategori?: ExceptionKategori | null;
-        tahap?: TahapOperasional | null;
         /** true = abaikan cache (tombol "Muat Ulang" / setelah aksi). */
         force?: boolean;
       } = {},
@@ -185,7 +178,6 @@ export default function PesananPengirimanPage() {
         page: opts.page ?? page,
         search: opts.search ?? search,
         kategori: opts.kategori !== undefined ? opts.kategori : kategori,
-        tahap: opts.tahap !== undefined ? opts.tahap : tahap,
       };
       const url = buildUrl(target);
 
@@ -219,7 +211,7 @@ export default function PesananPengirimanPage() {
         if (!controller.signal.aborted) setLoading(false);
       }
     },
-    [buildUrl, bucket, kategori, page, range, search, sort, tahap],
+    [buildUrl, bucket, kategori, page, range, search, sort],
   );
 
   // Muat pertama + muat ulang saat filter berubah.
@@ -270,20 +262,6 @@ export default function PesananPengirimanPage() {
 
   const gantiBucket = (next: QueueBucket) => {
     setBucket(next);
-    setTahap(null);
-    setPage(1);
-    setLoading(true);
-  };
-
-  /**
-   * Bukti kartu operasional: klik kartu tahap → daftar hanya pesanan tahap itu.
-   * Bucket dibalik ke `semua` supaya pesanan yang sudah diserahkan/diterima
-   * (di luar antrean kerja biasa) tetap bisa tampil sebagai buktinya.
-   */
-  const gantiTahap = (next: TahapOperasional) => {
-    const berikut = tahap === next ? null : next;
-    setTahap(berikut);
-    if (berikut) setBucket('semua');
     setPage(1);
     setLoading(true);
   };
@@ -296,7 +274,6 @@ export default function PesananPengirimanPage() {
   const gantiKategori = (next: ExceptionKategori) => {
     const berikut = kategori === next ? null : next;
     setKategori(berikut);
-    setTahap(null);
     setBucket('semua');
     setPage(1);
     setLoading(true);
@@ -935,30 +912,6 @@ export default function PesananPengirimanPage() {
           </div>
         )}
 
-        {tahap && (
-          <div
-            style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}
-            className="small"
-          >
-            <span className="muted">
-              Bukti kartu: hanya pesanan tahap <strong>{tahap}</strong>
-              {bucket !== 'semua' ? ' (bucket ikut menyaring)' : ''} — keadaan sekarang, bukan rentang tanggal
-            </span>
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={() => {
-                setTahap(null);
-                setBucket('perluDiproses');
-                setPage(1);
-                setLoading(true);
-              }}
-            >
-              Hapus saringan tahap
-            </button>
-          </div>
-        )}
-
         {bucket !== 'semua' && (
           <button
             type="button"
@@ -971,14 +924,6 @@ export default function PesananPengirimanPage() {
           </button>
         )}
       </div>
-
-      {/* Ringkasan operasional gudang — di bawah kartu kerja, memakai filter
-          tanggal halaman yang sama (bukan filter sendiri). */}
-      <OperasionalSectionPesanan
-        preset={range}
-        tahapAktif={tahap}
-        pilihTahap={gantiTahap}
-      />
 
       <StockPanel
         open={stockOpen}
