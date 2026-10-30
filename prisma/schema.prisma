@@ -46,12 +46,13 @@ enum TenantStatus {
 
 model User {
   id           String     @id @default(cuid())
-  email        String     @unique
-  passwordHash String     @map("password_hash")
-  name         String
-  status       UserStatus @default(ACTIVE)
-  createdAt    DateTime   @default(now()) @map("created_at")
-  updatedAt    DateTime   @updatedAt @map("updated_at")
+  email            String     @unique
+  passwordHash     String     @map("password_hash")
+  name             String
+  status           UserStatus @default(ACTIVE)
+  passwordChangedAt DateTime? @map("password_changed_at")
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
 
   memberships          TenantMembership[]
   auditLogs            AuditLog[]

@@ -11,6 +11,7 @@ import { PERMISSIONS, PERMISSION_KEYS, type Permission } from '@/modules/auth/do
 import { NotFoundError, ValidationError, BusinessRuleViolationError, ForbiddenError } from '@/shared/errors/AppError';
 import { auditLog } from '@/modules/audit/application/auditLog.service';
 import { UserRole, UserStatus } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 
 type Ctx = { params: Promise<{ userId: string }> };
 
@@ -22,8 +23,29 @@ function normalize(raw: unknown): Permission[] {
     .sort();
 }
 
+/** Rate limit sederhana (in-memory) untuk mencegah brute force ubah password/email. */
+const accountChangeAttempts = new Map<string, { count: number; firstAt: number }>();
+const ACCOUNT_CHANGE_WINDOW_MS = 15 * 60 * 1000; // 15 menit
+const ACCOUNT_CHANGE_MAX = 5; // maksimal 5 upaya per window per owner
+
+function checkAccountChangeRateLimit(actorId: string): void {
+  const now = Date.now();
+  const rec = accountChangeAttempts.get(actorId);
+  if (!rec || now - rec.firstAt > ACCOUNT_CHANGE_WINDOW_MS) {
+    accountChangeAttempts.set(actorId, { count: 1, firstAt: now });
+    return;
+  }
+  if (rec.count >= ACCOUNT_CHANGE_MAX) {
+    throw new ForbiddenError('Terlalu banyak percobaan ubah akun. Coba lagi dalam 15 menit.');
+  }
+  rec.count += 1;
+}
+
 const UpdateUserSchema = z.object({
   name: z.string().min(2, 'Nama minimal 2 karakter').max(100).optional(),
+  email: z.string().email('Format email tidak valid').max(200).optional(),
+  /** Password baru. Minimal 8 karakter, hanya bisa diubah oleh Owner. */
+  password: z.string().min(8, 'Password minimal 8 karakter').max(128).optional(),
   role: z.nativeEnum(UserRole).optional(),
   /**
    * Izin staff. Sengaja `z.array`, bukan `z.optional()` dengan
@@ -111,9 +133,34 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
     });
     if (!membership) throw new NotFoundError('Pengguna', userId);
 
+    // Rate limit hanya untuk perubahan sensitif (email/password).
+    if (parsed.data.email || parsed.data.password) {
+      checkAccountChangeRateLimit(ctx.userId);
+    }
+
     await prisma.$transaction(async (tx) => {
       if (parsed.data.name) {
         await tx.user.update({ where: { id: userId }, data: { name: parsed.data.name } });
+      }
+      if (parsed.data.email) {
+        // Email harus unik di seluruh sistem.
+        const existing = await tx.user.findUnique({ where: { email: parsed.data.email } });
+        if (existing && existing.id !== userId) {
+          throw new ValidationError('Email sudah digunakan oleh akun lain.', {
+            fields: { email: ['Email sudah terdaftar.'] },
+          });
+        }
+        await tx.user.update({ where: { id: userId }, data: { email: parsed.data.email } });
+      }
+      if (parsed.data.password) {
+        const saltRounds = 10;
+        await tx.user.update({
+          where: { id: userId },
+          data: {
+            passwordHash: await bcrypt.hash(parsed.data.password, saltRounds),
+            passwordChangedAt: new Date(),
+          },
+        });
       }
       if (parsed.data.role) {
         await tx.tenantMembership.update({
@@ -142,9 +189,10 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
       entityId: userId,
       metadata: {
         name: parsed.data.name ?? null,
+        email: parsed.data.email ?? null,
+        passwordChanged: parsed.data.password ? true : null,
         role: parsed.data.role ?? null,
         status: parsed.data.status ?? null,
-        // Catat izin BARU dan LAMA supaya jejak audit menunjukkan perubahan.
         permissionsBefore:
           membership.role === 'OWNER' ? 'ALL' : normalize(membership.permissions),
         permissionsAfter: parsed.data.permissions ? normalize(parsed.data.permissions) : null,
