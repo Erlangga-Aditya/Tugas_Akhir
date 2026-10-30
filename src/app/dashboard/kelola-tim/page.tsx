@@ -93,12 +93,23 @@ export default function KelolaTimPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
 
+  // Edit akun (nama / email / password) — hanya Owner.
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<Record<string, { name: string; email: string; password: string }>>({});
+  const [editingId, setEditingId] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const res = await api<UsersResponse>('/api/v1/users?pageSize=50');
       setData(res);
       setDraft(Object.fromEntries(res.items.map((m) => [m.userId, m.permissions])));
+      // Inisialisasi draft edit dari data server.
+      setEditDraft(
+        Object.fromEntries(
+          res.items.map((m) => [m.userId, { name: m.name, email: m.email, password: '' }]),
+        ),
+      );
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -168,6 +179,35 @@ export default function KelolaTimPage() {
       setError((err as Error).message);
     } finally {
       setSavingId(null);
+    }
+  }
+
+  async function saveAccount(member: Member) {
+    const next = editDraft[member.userId];
+    if (!next) return;
+    setEditingId(member.userId);
+    setError(null);
+    try {
+      const body: { name: string; email: string; password?: string } = {
+        name: next.name,
+        email: next.email,
+      };
+      if (next.password) body.password = next.password;
+      await api(`/api/v1/users/${member.userId}`, {
+        method: 'PATCH',
+        body,
+      });
+      setNotice(`Akun ${member.name} diperbarui.`);
+      setEditDraft((prev) => ({
+        ...prev,
+        [member.userId]: { name: next.name, email: next.email, password: '' },
+      }));
+      setEditId(null);
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setEditingId(null);
     }
   }
 
@@ -276,6 +316,14 @@ export default function KelolaTimPage() {
                         >
                           <Trash2 size={16} aria-hidden /> Cabut
                         </button>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          disabled={savingId === m.userId || editingId === m.userId}
+                          onClick={() => setEditId(editId === m.userId ? null : m.userId)}
+                        >
+                          <UserPlus size={16} aria-hidden /> Edit Akun
+                        </button>
                       </div>
                     ) : (
                       <span className="muted small">—</span>
@@ -306,6 +354,26 @@ export default function KelolaTimPage() {
                 onToggle={(k) => toggle(m.userId, k)}
                 onToggleGroup={(g, keys) => toggleGroup(m.userId, g, keys)}
                 onSave={() => void savePermissions(m)}
+              />
+            ))
+        : null}
+
+      {editId
+        ? data.items
+            .filter((m) => m.userId === editId)
+            .map((m) => (
+              <EditAccountForm
+                key={`edit-${m.userId}`}
+                member={m}
+                draft={
+                  editDraft[m.userId] ?? { name: m.name, email: m.email, password: '' }
+                }
+                onChange={(patch) =>
+                  setEditDraft((prev) => ({ ...prev, [m.userId]: patch }))
+                }
+                onSave={() => void saveAccount(m)}
+                onToggle={() => setEditId(null)}
+                saving={editingId === m.userId}
               />
             ))
         : null}
@@ -464,6 +532,92 @@ function InviteForm({
             {busy ? 'Menyimpan…' : 'Buat akun'}
           </button>
           <button type="button" className="btn btn-ghost" onClick={onDone}>Batal</button>
+        </div>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * Form edit akun staff. Hanya Owner yang memakai ini — staf yang ingin
+ * mengganti email/password harus meminta ke owner.
+ */
+function EditAccountForm({
+  member,
+  draft,
+  onChange,
+  onSave,
+  onToggle,
+  saving,
+}: {
+  member: Member;
+  draft: { name: string; email: string; password: string };
+  onChange: (patch: { name: string; email: string; password: string }) => void;
+  onSave: () => void;
+  onToggle: () => void;
+  saving: boolean;
+}) {
+  const nameChanged = draft.name !== member.name;
+  const emailChanged = draft.email !== member.email;
+  const passwordChanged = draft.password.length > 0;
+  const dirty = nameChanged || emailChanged || passwordChanged;
+
+  return (
+    <form
+      className="card"
+      style={{ marginTop: 16 }}
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (dirty) onSave();
+      }}
+    >
+      <div className="page-head">
+        <div>
+          <h2>Edit Akun — {member.name}</h2>
+          <p className="muted small">
+            Hanya Owner yang bisa mengubah. Kosongkan kolom password jika tidak ingin diganti.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button type="submit" className="btn btn-primary" disabled={!dirty || saving}>
+            {saving ? 'Menyimpan…' : 'Simpan'}
+          </button>
+          <button type="button" className="btn btn-ghost" onClick={onToggle}>Batal</button>
+        </div>
+      </div>
+      <div style={{ display: 'grid', gap: 8, maxWidth: 420 }}>
+        <label>
+          Nama
+          <input
+            className="input"
+            value={draft.name}
+            onChange={(e) => onChange({ ...draft, name: e.target.value })}
+            required
+            minLength={2}
+          />
+        </label>
+        <label>
+          Email
+          <input
+            className="input"
+            type="email"
+            value={draft.email}
+            onChange={(e) => onChange({ ...draft, email: e.target.value })}
+            required
+          />
+        </label>
+        <label>
+          Password baru (kosongkan jika tidak diubah, minimal 8 karakter)
+          <input
+            className="input"
+            type="password"
+            value={draft.password}
+            onChange={(e) => onChange({ ...draft, password: e.target.value })}
+            minLength={8}
+          />
+        </label>
+        <div className="muted small">
+          Nama ini yang ditampilkan di laporan, misalnya Rekap Kerja Staf.
         </div>
       </div>
     </form>
