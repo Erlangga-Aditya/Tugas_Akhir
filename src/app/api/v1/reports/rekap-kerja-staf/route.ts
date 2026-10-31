@@ -1,5 +1,5 @@
 import { type NextRequest } from 'next/server';
-import { getRekapKerjaStaf } from '@/modules/reports/application/rekap-kerja-staf.usecase';
+import { getRekapKerjaStaf, getTahunTersedia } from '@/modules/reports/application/rekap-kerja-staf.usecase';
 import { parseNomorMingguGaji, mingguGajiBerdasarkanTanggal } from '@/modules/reports/domain/minggu-gaji';
 import { successResponse, handleRouteError } from '@/shared/application/apiResponse';
 import { getAuthContext, getRequestId, assertPermission } from '@/shared/application/routeHelpers';
@@ -26,6 +26,11 @@ export async function GET(request: NextRequest) {
     const bulanParam = params.get('bulan');
     const mingguParam = params.get('minggu');
 
+    // Ambil tahun yang punya catatan kerja (untuk dropdown tahun di UI).
+    // Dijalankan bersamaan dengan pengambilan rekap — tidak menambah round-trip
+    // yang dirasakan pemanggil.
+    const tahunTersedia = getTahunTersedia(ctx.tenantId);
+
     // Validasi tahun & bulan — harus angka utuh, bukan coyote string.
     const tahun = Number(tahunParam);
     const bulan = Number(bulanParam);
@@ -48,8 +53,11 @@ export async function GET(request: NextRequest) {
     const mingguParsed = parseNomorMingguGaji(mingguParam);
     const minggu = mingguParsed ?? mingguGajiBerdasarkanTanggal(new Date()).minggu;
 
-    const data = await getRekapKerjaStaf(ctx.tenantId, tahun, bulan, minggu);
-    return successResponse(data, { requestId });
+    const [data, daftarTahun] = await Promise.all([
+      getRekapKerjaStaf(ctx.tenantId, tahun, bulan, minggu),
+      tahunTersedia,
+    ]);
+    return successResponse({ ...data, tahunTersedia: daftarTahun }, { requestId });
   } catch (error) {
     return handleRouteError(error, requestId, request);
   }
