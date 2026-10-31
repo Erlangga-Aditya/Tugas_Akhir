@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { UserPlus, ShieldCheck, Power, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { PasswordInput } from '@/components/password-input';
 
 /**
  * Kelola Tim — tempat owner mengatur siapa yang boleh masuk dan apa yang boleh
@@ -504,7 +505,13 @@ function InviteForm({
         </label>
         <label>
           Password (minimal 8 karakter)
-          <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
+          <PasswordInput
+            className="input"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            minLength={8}
+          />
         </label>
         <div>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>Hak akses awal</div>
@@ -608,9 +615,8 @@ function EditAccountForm({
         </label>
         <label>
           Password baru (kosongkan jika tidak diubah, minimal 8 karakter)
-          <input
+          <PasswordInput
             className="input"
-            type="password"
             value={draft.password}
             onChange={(e) => onChange({ ...draft, password: e.target.value })}
             minLength={8}

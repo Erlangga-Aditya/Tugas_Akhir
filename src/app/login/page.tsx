@@ -4,6 +4,7 @@ import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { PackageCheck, LogIn } from 'lucide-react';
 import { api } from '@/lib/api';
+import { PasswordInput } from '@/components/password-input';
 
 interface TenantOption { id: string; name: string; role: string }
 
@@ -71,8 +72,15 @@ export default function LoginPage() {
               </div>
               <div className="field">
                 <label htmlFor="password">Password</label>
-                <input id="password" type="password" className="input" placeholder="••••••••"
-                  value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" />
+                <PasswordInput
+                  id="password"
+                  className="input"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  autoComplete="current-password"
+                />
               </div>
               {error ? <div className="alert alert-danger mb16">{error}</div> : null}
               <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%' }}>
