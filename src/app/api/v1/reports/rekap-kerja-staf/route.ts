@@ -1,8 +1,16 @@
 import { type NextRequest } from 'next/server';
-import { getRekapKerjaStaf, getTahunTersedia } from '@/modules/reports/application/rekap-kerja-staf.usecase';
-import { parseNomorMingguGaji, mingguGajiBerdasarkanTanggal } from '@/modules/reports/domain/minggu-gaji';
+import {
+  getRekapKerjaStaf,
+  getTahunTersedia,
+} from '@/modules/reports/application/rekap-kerja-staf.usecase';
+import {
+  parseNomorMingguGaji,
+  mingguGajiBerdasarkanTanggal,
+  type NomorMingguGaji,
+} from '@/modules/reports/domain/minggu-gaji';
 import { successResponse, handleRouteError } from '@/shared/application/apiResponse';
 import { getAuthContext, getRequestId, assertPermission } from '@/shared/application/routeHelpers';
+import { ValidationError } from '@/shared/errors/AppError';
 
 /**
  * GET /api/v1/reports/rekap-kerja-staf?tahun=2026&bulan=10&minggu=2
@@ -12,7 +20,8 @@ import { getAuthContext, getRequestId, assertPermission } from '@/shared/applica
  * sudah tercatat di fulfillment_orders — read-only, tidak ada side-effect.
  *
  * Jika `minggu` tidak diberikan, default ke minggu yang sesuai dengan tanggal
- * hari ini.
+ * hari ini. Nilai yang DIBERIKAN tetapi tidak valid ditolak (400), bukan
+ * diam-diam diganti — supaya kesalahan pemanggil tidak tersamarkan.
  */
 export async function GET(request: NextRequest) {
   const requestId = getRequestId(request);
@@ -22,36 +31,28 @@ export async function GET(request: NextRequest) {
 
     const params = new URL(request.url).searchParams;
 
-    const tahunParam = params.get('tahun');
-    const bulanParam = params.get('bulan');
-    const mingguParam = params.get('minggu');
-
-    // Ambil tahun yang punya catatan kerja (untuk dropdown tahun di UI).
-    // Dijalankan bersamaan dengan pengambilan rekap — tidak menambah round-trip
-    // yang dirasakan pemanggil.
+    // Tahun yang punya catatan kerja — untuk dropdown tahun di UI. Dijalankan
+    // bersamaan dengan pengambilan rekap, jadi tidak menambah round-trip.
     const tahunTersedia = getTahunTersedia(ctx.tenantId);
 
-    // Validasi tahun & bulan — harus angka utuh, bukan coyote string.
-    const tahun = Number(tahunParam);
-    const bulan = Number(bulanParam);
+    const tahun = Number(params.get('tahun'));
+    const bulan = Number(params.get('bulan'));
     if (!Number.isInteger(tahun) || tahun < 2000 || tahun > 2100) {
-      return successResponse(
-        { error: 'Tahun tidak valid. Contoh: ?tahun=2026' },
-        { requestId, status: 400 },
-      );
+      throw new ValidationError('Tahun tidak valid. Contoh: ?tahun=2026');
     }
     if (!Number.isInteger(bulan) || bulan < 1 || bulan > 12) {
-      return successResponse(
-        { error: 'Bulan tidak valid. Contoh: ?bulan=10' },
-        { requestId, status: 400 },
-      );
+      throw new ValidationError('Bulan tidak valid. Contoh: ?bulan=10');
     }
 
-    // Jika minggu tidak diberikan / tidak valid, pakai minggu hari ini.
-    // parseNomorMingguGaji mengembalikan angka asli (bukan string) — penting
-    // karena perhitungan rentang di domain melakukan aritmetika `minggu + 1`.
-    const mingguParsed = parseNomorMingguGaji(mingguParam);
-    const minggu = mingguParsed ?? mingguGajiBerdasarkanTanggal(new Date()).minggu;
+    const mingguParam = params.get('minggu');
+    let minggu: NomorMingguGaji;
+    if (mingguParam !== null && mingguParam !== '') {
+      const parsed = parseNomorMingguGaji(mingguParam);
+      if (!parsed) throw new ValidationError('Minggu tidak valid. Pilih 1, 2, 3, atau 4.');
+      minggu = parsed;
+    } else {
+      minggu = mingguGajiBerdasarkanTanggal(new Date()).minggu;
+    }
 
     const [data, daftarTahun] = await Promise.all([
       getRekapKerjaStaf(ctx.tenantId, tahun, bulan, minggu),

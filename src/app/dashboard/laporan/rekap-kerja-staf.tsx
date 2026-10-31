@@ -4,6 +4,10 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Users } from 'lucide-react';
 import { api } from '@/lib/api';
 import { LoadingState, ErrorState, EmptyState } from '@/components/ui';
+import {
+  mingguGajiBerdasarkanTanggal,
+  type NomorMingguGaji,
+} from '@/modules/reports/domain/minggu-gaji';
 
 /**
  * Rekap Kerja Staf — laporan kerja staf per minggu gaji.
@@ -65,12 +69,16 @@ const NAMA_BULAN = [
 const PILIHAN_MINGGU = [1, 2, 3, 4] as const;
 
 export default function RekapKerjaStafSection() {
-  // Default: bulan & tahun hari ini. Minggu diisi otomatis oleh API
-  // (jika parameter minggu tidak diberikan, API memakai minggu hari ini).
+  // Default: bulan & tahun hari ini, dan minggu gaji yang SEDANG berjalan.
+  // Tanpa ini, section selalu terbuka di minggu ke-1 sehingga owner harus
+  // mengklik ulang setiap kali membuka halaman — dan angka minggu berjalan
+  // terlihat kosong.
   const sekarang = new Date();
   const [tahun, setTahun] = useState(sekarang.getFullYear());
   const [bulan, setBulan] = useState(sekarang.getMonth() + 1);
-  const [minggu, setMinggu] = useState<1 | 2 | 3 | 4>(1);
+  const [minggu, setMinggu] = useState<NomorMingguGaji>(
+    () => mingguGajiBerdasarkanTanggal(new Date()).minggu,
+  );
   const [data, setData] = useState<RekapKerjaStaf | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -91,21 +99,32 @@ export default function RekapKerjaStafSection() {
       });
   }, [tahun, bulan, minggu]);
 
+  // Muat data saat filter berubah. `await Promise.resolve()` menunda setState
+  // ke luar badan effect, sehingga tidak memicu cascading render (aturan
+  // react-hooks/set-state-in-effect). Pola ini sama dengan halaman Pesanan.
   useEffect(() => {
-    load();
+    let cancelled = false;
+    void (async () => {
+      await Promise.resolve();
+      if (cancelled) return;
+      load();
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [load]);
 
   // Pilihan tahun: dari tahun data kerja pertama sampai tahun berjalan.
   // Berdasarkan jejak aksi nyata di database, jadi tahun tanpa catatan
-  // (mis. sejak sistem dibuat) tidak ditampilkan. Selalu mencakup tahun
-  // sekarang walau belum ada aksi (mis. 1 Januari tahun baru).
+  // tidak ditampilkan. Selalu mencakup tahun sekarang walau belum ada aksi.
+  const tahunIni = sekarang.getFullYear();
   const pilihanTahun = useMemo(() => {
-    const min = data?.tahunTersedia?.min ?? sekarang.getFullYear();
-    const max = data?.tahunTersedia?.max ?? sekarang.getFullYear();
+    const min = data?.tahunTersedia?.min ?? tahunIni;
+    const max = data?.tahunTersedia?.max ?? tahunIni;
     const daftar: number[] = [];
     for (let t = min; t <= max; t += 1) daftar.push(t);
     return daftar;
-  }, [data?.tahunTersedia]);
+  }, [data?.tahunTersedia, tahunIni]);
 
   const pilihanBulan = useMemo(() => NAMA_BULAN.map((nama, i) => ({ nilai: i + 1, nama })), []);
 
@@ -241,7 +260,7 @@ function TabelRekap({
   }
 
   // Hanya tampilkan tanggal yang ada kerjaannya. Tanggal tanpa catatan
-  // apa pun disembunyikan supaya owner fokus ke hari yang ada pekerjaan.
+  // disembunyikan supaya owner fokus ke hari yang ada pekerjaan.
   // `namaHari` sejajar dengan `kolomHari`, jadi nama hari diambil dari index kolom.
   const tanggalAda = new Set<number>();
   for (const staf of data.daftar) {
