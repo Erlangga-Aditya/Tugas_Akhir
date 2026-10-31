@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isAwbMissing,
   mapOrderStatusToShipment,
   SHIPMENT_LEFT_WAREHOUSE,
   SHIPMENT_TERMINAL,
@@ -75,6 +76,24 @@ describe('mapOrderStatusToShipment', () => {
   it('status LOGISTIK bukan status pesanan (penyebab resi tidak tersimpan)', () => {
     expect(mapOrderStatusToShipment('LOGISTICS_REQUEST_CREATED')).toBeNull();
     expect(mapOrderStatusToShipment('LOGISTICS_READY')).toBeNull();
+  });
+
+  /**
+   * `isAwbMissing` — dasar pemulihan AWB otomatis.
+   *
+   * Pesanan yang Shopee sudah proses WAJIB punya resi di sistem kita. Kalau
+   * belum, sinkronisasi mengambilnya langsung dari Shopee (bukan menunggu
+   * operator mengklik "Ambil Resi").
+   */
+  it('isAwbMissing hanya untuk status yang menuntut resi', () => {
+    expect(isAwbMissing('PROCESSED', null)).toBe(true);
+    expect(isAwbMissing('RETRY_SHIP', '   ')).toBe(true);
+    // Sudah punya resi → tidak perlu dipulihkan.
+    expect(isAwbMissing('PROCESSED', 'SPX123')).toBe(false);
+    // Status yang memang belum menuntut resi.
+    expect(isAwbMissing('READY_TO_SHIP', null)).toBe(false);
+    expect(isAwbMissing('CANCELLED', null)).toBe(false);
+    expect(isAwbMissing(null, null)).toBe(false);
   });
 });
 

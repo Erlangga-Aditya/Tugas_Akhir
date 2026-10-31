@@ -18,7 +18,7 @@ import type { ShopCredentials, ArrangeShipmentInput, SyncOptions } from '../doma
 import { broadcastSystemEvent } from '@/lib/sse';
 import { getShopeeAppConfig } from './appConfig.service';
 import { computePlatformFee, toAmount } from '../domain/escrow-fee-mapping';
-import { mapOrderStatusToShipment, shouldAdvanceShipmentStatus } from '@/modules/shipping/domain/shipment-status';
+import { mapOrderStatusToShipment, shouldAdvanceShipmentStatus, isAwbMissing, AWB_EXPECTED_ORDER_STATUSES } from '@/modules/shipping/domain/shipment-status';
 
 const shopee = new ShopeeAdapter();
 
@@ -445,9 +445,25 @@ export async function triggerOrderSync(
         incomeJson: mOrder.payment?.income ?? undefined,
       });
 
-      // Auto-create/update Shipment if order has tracking info
-      if (mOrder.trackingNumber) {
-        await upsertShipment(tenantId, result.orderId, mOrder.trackingNumber, mOrder.carrier, mOrder.rawStatus);
+      // Auto-create/update Shipment if order has tracking info.
+      //
+      // Bila Shopee melaporkan pesanan SUDAH diproses tetapi detail pesanan
+      // tidak membawa nomor resi, ambil resinya langsung. Tanpa langkah ini
+      // baris `shipments` tidak pernah dibuat: pesanan masuk kartu "Sudah Ada
+      // Resi" tanpa resi, dan label tidak bisa dicetak.
+      let awb = mOrder.trackingNumber;
+      if (isAwbMissing(mOrder.rawStatus, awb)) {
+        awb = await shopee.getTrackingNumber(
+          credentials,
+          mOrder.externalOrderId,
+          mOrder.payment?.packageNumber ?? undefined,
+        );
+        if (awb) {
+          logger.info(`AWB dipulihkan saat sinkronisasi: order ${mOrder.externalOrderId}`, { awb });
+        }
+      }
+      if (awb) {
+        await upsertShipment(tenantId, result.orderId, awb, mOrder.carrier, mOrder.rawStatus);
       }
 
       // Status pengiriman yang SUDAH ada ikut naik dari `order_status` pesanan.
@@ -1203,6 +1219,50 @@ export async function triggerTrackingSync(tenantId: string, shopId: string, acto
 
   try {
     let recordsWritten = 0;
+
+    // ── 0. Pulihkan AWB yang belum tersimpan ────────────────────────────────
+    //
+    // Blok di bawah hanya menelusuri pengiriman yang SUDAH punya baris, jadi
+    // pesanan yang Shopee sudah proses tetapi resinya belum pernah tersimpan
+    // (webhook telat, atau diproses sebelum aplikasi terhubung) tidak pernah
+    // tersentuh — labelnya tidak bisa dicetak selamanya. Di sini resinya
+    // diambil langsung. Dibatasi 100 pesanan per putaran agar murah.
+    const kandidatTanpaAwb = await prisma.order.findMany({
+      where: {
+        shopId,
+        tenantId,
+        status: { notIn: ['CANCELLED', 'COMPLETED'] },
+        externalStatus: { in: [...AWB_EXPECTED_ORDER_STATUSES] },
+      },
+      select: {
+        id: true,
+        externalOrderId: true,
+        packageNumber: true,
+        externalStatus: true,
+        shipments: { select: { awb: true }, orderBy: { createdAt: 'desc' }, take: 1 },
+      },
+      take: 100,
+    });
+
+    for (const kandidat of kandidatTanpaAwb) {
+      if (!isAwbMissing(kandidat.externalStatus, kandidat.shipments[0]?.awb)) continue;
+      const awb = await shopee.getTrackingNumber(
+        credentials,
+        kandidat.externalOrderId,
+        kandidat.packageNumber ?? undefined,
+      );
+      if (!awb) continue;
+      await saveArrangedShipment(tenantId, kandidat.id, awb, null);
+      recordsWritten += 1;
+      broadcastSystemEvent('awb:updated', {
+        tenantId,
+        shopId,
+        orderId: kandidat.id,
+        externalOrderId: kandidat.externalOrderId,
+        awb,
+      });
+      logger.info(`AWB dipulihkan saat sinkronisasi pelacakan: order ${kandidat.externalOrderId}`, { awb });
+    }
 
     // ── 1. Active shipments that need status update ──────────────────────────
     const activeShipments = await prisma.shipment.findMany({

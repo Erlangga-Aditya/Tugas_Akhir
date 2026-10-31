@@ -89,7 +89,19 @@ export function classifyWorkQueue(input: WorkQueueInput): WorkQueueEntry {
       return { stage, needsWork: true, hasAwb: input.hasAwb, bucket: 'baru' };
     }
     if (EXTERNAL_PROCESSED.has(external)) {
-      return { stage, needsWork: true, hasAwb: input.hasAwb, bucket: 'sudahResi' };
+      // RESI YANG KITA MILIKI adalah penentu kartu, bukan status mentahnya.
+      //
+      // Shopee bisa melaporkan `PROCESSED` sementara baris `shipments` kita
+      // belum menyimpan AWB (webhook telat, atau pesanan diproses sebelum
+      // aplikasi terhubung). Versi lama langsung menaruhnya di "Sudah Ada
+      // Resi" — padahal kartunya menampilkan tombol "Ambil Resi" karena AWB
+      // kosong. Operator melihat dua hal yang bertentangan.
+      return {
+        stage,
+        needsWork: true,
+        hasAwb: input.hasAwb,
+        bucket: input.hasAwb ? 'sudahResi' : 'baru',
+      };
     }
   }
 

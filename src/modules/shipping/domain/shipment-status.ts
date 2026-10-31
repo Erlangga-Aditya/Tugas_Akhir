@@ -74,6 +74,31 @@ export function mapOrderStatusToShipment(
   }
 }
 
+/**
+ * Status pesanan marketplace yang berarti resi SEHARUSNYA sudah terbit.
+ *
+ * `PROCESSED` = "Telah diproses" (pengiriman sudah diatur penjual),
+ * `RETRY_SHIP` = paket dikirim ulang. Keduanya menuntut nomor resi.
+ * Sumber: docs/shopee-raw/endpoints (Data Definition — OrderStatus).
+ */
+export const AWB_EXPECTED_ORDER_STATUSES: ReadonlySet<string> = new Set(['PROCESSED', 'RETRY_SHIP']);
+
+/**
+ * true = status pesanan menuntut resi, tetapi kita BELUM menyimpannya.
+ *
+ * Dipakai untuk memulihkan AWB yang hilang (webhook telat / pesanan diproses
+ * sebelum aplikasi terhubung). Tanpa pemulihan ini pesanan tampil di kartu
+ * "Sudah Ada Resi" padahal `shipments.awb` kosong — dan labelnya tidak bisa
+ * dicetak.
+ */
+export function isAwbMissing(
+  orderStatus: string | null | undefined,
+  awb: string | null | undefined,
+): boolean {
+  const status = (orderStatus ?? '').toUpperCase();
+  return AWB_EXPECTED_ORDER_STATUSES.has(status) && !(awb ?? '').trim();
+}
+
 /** Peringkat kemajuan paket. Semakin besar semakin jauh perjalanannya. */
 const SHIPMENT_RANK: Record<string, number> = {
   PENDING: 0,

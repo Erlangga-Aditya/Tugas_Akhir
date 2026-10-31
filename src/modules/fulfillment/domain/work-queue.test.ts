@@ -27,6 +27,19 @@ describe('antrean kerja gudang — mengikuti status Shopee', () => {
     expect(q({ externalStatus: 'RETRY_SHIP', hasAwb: true })).toMatchObject({ needsWork: true, bucket: 'sudahResi' });
   });
 
+  /**
+   * Regresi produksi 2026-10-29: empat pesanan berstatus PROCESSED tetapi
+   * `shipments.awb` kosong muncul di kartu "Sudah Ada Resi" — padahal kartunya
+   * menampilkan tombol "Ambil Resi". Status mentah saja tidak cukup; resi yang
+   * benar-benar kita simpan yang menentukan kartu.
+   */
+  it('PROCESSED tanpa AWB tersimpan masuk kartu Pesanan Baru (bukan Sudah Ada Resi)', () => {
+    expect(q({ externalStatus: 'PROCESSED', hasAwb: false })).toMatchObject({
+      needsWork: true,
+      bucket: 'baru',
+    });
+  });
+
   // Inti perbaikan: IN_CANCEL dipetakan ke NEW internal, sehingga tanpa
   // `externalStatus` pesanan yang sedang dibatalkan pembeli ikut terhitung.
   it.each(['IN_CANCEL', 'UNPAID', 'PENDING', 'TO_RETURN', 'SHIPPED', 'TO_CONFIRM_RECEIVE', 'CANCELLED'])(
