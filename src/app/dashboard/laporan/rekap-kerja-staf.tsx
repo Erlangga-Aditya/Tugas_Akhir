@@ -53,6 +53,8 @@ interface RekapKerjaStaf {
   packing: RekapPerJenis;
   serahKirim: RekapPerJenis;
   ringkasan: RingkasanPerOrang[];
+  /** Rentang tahun yang memiliki catatan kerja (untuk dropdown tahun). */
+  tahunTersedia?: { min: number; max: number };
 }
 
 const NAMA_BULAN = [
@@ -93,11 +95,17 @@ export default function RekapKerjaStafSection() {
     load();
   }, [load]);
 
-  // Pilihan tahun: 3 tahun ke belakang sampai tahun ini (cukup untuk audit gaji).
+  // Pilihan tahun: dari tahun data kerja pertama sampai tahun berjalan.
+  // Berdasarkan jejak aksi nyata di database, jadi tahun tanpa catatan
+  // (mis. sejak sistem dibuat) tidak ditampilkan. Selalu mencakup tahun
+  // sekarang walau belum ada aksi (mis. 1 Januari tahun baru).
   const pilihanTahun = useMemo(() => {
-    const tahunIni = new Date().getFullYear();
-    return [tahunIni - 2, tahunIni - 1, tahunIni];
-  }, []);
+    const min = data?.tahunTersedia?.min ?? sekarang.getFullYear();
+    const max = data?.tahunTersedia?.max ?? sekarang.getFullYear();
+    const daftar: number[] = [];
+    for (let t = min; t <= max; t += 1) daftar.push(t);
+    return daftar;
+  }, [data?.tahunTersedia]);
 
   const pilihanBulan = useMemo(() => NAMA_BULAN.map((nama, i) => ({ nilai: i + 1, nama })), []);
 
@@ -253,19 +261,10 @@ function TabelRekap({
               <th>Nama Staf</th>
               {kolomTerpilih.map((k) => (
                 <th key={k.tgl} className="num" title={`${k.hari}, ${k.tgl} ${bulanLabel}`}>
-                  {k.tgl}
+                  {k.tgl} {k.hari.slice(0, 3)}
                 </th>
               ))}
               <th className="num">Total</th>
-            </tr>
-            <tr>
-              <th aria-hidden />
-              {kolomTerpilih.map((k) => (
-                <th key={k.tgl} className="num small muted" style={{ fontWeight: 400 }}>
-                  {k.hari.slice(0, 3)}
-                </th>
-              ))}
-              <th aria-hidden />
             </tr>
           </thead>
           <tbody>
