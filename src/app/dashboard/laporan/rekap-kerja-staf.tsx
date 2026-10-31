@@ -171,12 +171,12 @@ export default function RekapKerjaStafSection() {
             Menampilkan: <strong>Minggu ke-{data.rentang.minggu}</strong> ({data.rentang.label})
           </p>
 
-          <TabelRekap judul="Kerjaan Packing (scan resi)" data={data.packing} kolomHari={data.kolomHari} namaHari={data.namaHari} bulanLabel={NAMA_BULAN[data.rentang.bulan - 1] ?? ''} />
-          <TabelRekap judul="Kerjaan Serah Kurir (tekan tombol)" data={data.serahKirim} kolomHari={data.kolomHari} namaHari={data.namaHari} bulanLabel={NAMA_BULAN[data.rentang.bulan - 1] ?? ''} />
+          <TabelRekap judul="Packing" data={data.packing} kolomHari={data.kolomHari} namaHari={data.namaHari} bulanLabel={NAMA_BULAN[data.rentang.bulan - 1] ?? ''} />
+          <TabelRekap judul="Kirim" data={data.serahKirim} kolomHari={data.kolomHari} namaHari={data.namaHari} bulanLabel={NAMA_BULAN[data.rentang.bulan - 1] ?? ''} />
 
           {/* Ringkasan per orang — yang dilihat owner saat menggaji */}
           <div style={{ marginTop: 24 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Ringkasan per Orang</h3>
+            <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Ringkasan</h3>
             <div className="table-wrap">
               <table className="table">
                 <thead>
@@ -232,6 +232,17 @@ function TabelRekap({
     );
   }
 
+  // Hanya tampilkan tanggal yang ada kerjaannya. Tanggal tanpa catatan
+  // apa pun disembunyikan supaya owner fokus ke hari yang ada pekerjaan.
+  // `namaHari` sejajar dengan `kolomHari`, jadi nama hari diambil dari index kolom.
+  const tanggalAda = new Set<number>();
+  for (const staf of data.daftar) {
+    for (const perHari of staf.perHari) tanggalAda.add(perHari.tanggal);
+  }
+  const kolomTerpilih = kolomHari
+    .map((tgl, i) => ({ tgl, hari: namaHari[i] ?? '' }))
+    .filter((k) => tanggalAda.has(k.tgl));
+
   return (
     <div style={{ marginBottom: 24 }}>
       <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>{judul}</h3>
@@ -240,18 +251,18 @@ function TabelRekap({
           <thead>
             <tr>
               <th>Nama Staf</th>
-              {kolomHari.map((tgl, i) => (
-                <th key={tgl} className="num" title={`${namaHari[i]}, ${tgl} ${bulanLabel}`}>
-                  {tgl}
+              {kolomTerpilih.map((k) => (
+                <th key={k.tgl} className="num" title={`${k.hari}, ${k.tgl} ${bulanLabel}`}>
+                  {k.tgl}
                 </th>
               ))}
               <th className="num">Total</th>
             </tr>
             <tr>
               <th aria-hidden />
-              {namaHari.map((h, i) => (
-                <th key={i} className="num small muted" style={{ fontWeight: 400 }}>
-                  {h.slice(0, 3)}
+              {kolomTerpilih.map((k) => (
+                <th key={k.tgl} className="num small muted" style={{ fontWeight: 400 }}>
+                  {k.hari.slice(0, 3)}
                 </th>
               ))}
               <th aria-hidden />
@@ -264,14 +275,14 @@ function TabelRekap({
                 <Fragment key={staf.userId}>
                   <tr>
                     <td style={{ fontWeight: 600 }}>{staf.nama}</td>
-                    {kolomHari.map((tgl) => {
-                      const sel = petaHari.get(tgl);
+                    {kolomTerpilih.map((k) => {
+                      const sel = petaHari.get(k.tgl);
                       const jumlah = sel?.jumlah ?? 0;
-                      const kunci = `${staf.userId}|${tgl}`;
+                      const kunci = `${staf.userId}|${k.tgl}`;
                       const aktif = selAktif === kunci;
                       return (
                         <td
-                          key={tgl}
+                          key={k.tgl}
                           className="num"
                           style={
                             jumlah === 0
@@ -283,7 +294,7 @@ function TabelRekap({
                           {...(jumlah > 0
                             ? {
                                 onClick: () => setSelAktif(aktif ? null : kunci),
-                                title: `${staf.nama} — ${jumlah} paket pada tanggal ${tgl}. Klik untuk rincian.`,
+                                title: `${staf.nama} — ${jumlah} paket pada tanggal ${k.tgl}. Klik untuk rincian.`,
                               }
                             : {})}
                         >
@@ -295,7 +306,7 @@ function TabelRekap({
                   </tr>
                   {selAktif?.startsWith(`${staf.userId}|`) && (
                     <tr key={`${staf.userId}-rincian`}>
-                      <td colSpan={kolomHari.length + 2} style={{ padding: '8px 12px', background: 'var(--surface-low)' }}>
+                      <td colSpan={kolomTerpilih.length + 2} style={{ padding: '8px 12px', background: 'var(--surface-low)' }}>
                         <RincianHarian sel={petaHari.get(Number(selAktif.split('|')[1]))} namaBulan={bulanLabel} namaStaf={staf.nama} />
                       </td>
                     </tr>
