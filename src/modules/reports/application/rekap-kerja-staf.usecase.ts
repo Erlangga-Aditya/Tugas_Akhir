@@ -30,8 +30,8 @@ export type JenisKerjaan = 'packing' | 'serahKirim';
 export const JENIS_KERJAAN: readonly JenisKerjaan[] = ['packing', 'serahKirim'] as const;
 
 export const LABEL_JENIS_KERJAAN: Record<JenisKerjaan, string> = {
-  packing: 'Packing (scan resi)',
-  serahKirim: 'Serah Kurir (serahkan ke kurir)',
+  packing: 'Packing',
+  serahKirim: 'Kirim',
 };
 
 /** Satu baris rekap harian seorang staf pada satu jenis kerjaan. */
