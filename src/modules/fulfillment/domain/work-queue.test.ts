@@ -53,6 +53,36 @@ describe('antrean kerja gudang — mengikuti status Shopee', () => {
     expect(q({ externalStatus: 'PROCESSED', shipmentStatus: 'PICKED_UP', hasAwb: true }).needsWork).toBe(false);
   });
 
+  /**
+   * Regresi produksi 2026-10-31 (order 2610301FP9NBWQ).
+   *
+   * Operator sudah menyerahkan paket (fulfillment `HANDED_OVER`), tetapi kurir
+   * belum memindai sehingga `shipment.status` masih `READY_TO_SHIP` dan Shopee
+   * masih `PROCESSED`. Pesanan ber-resi ini WAJIB tetap terlihat di kartu
+   * "Sudah Ada Resi" sampai kurir benar-benar menjemputnya.
+   */
+  it('HANDED_OVER yang belum dijemput kurir tetap tampil di kartu Sudah Ada Resi', () => {
+    expect(
+      q({
+        externalStatus: 'PROCESSED',
+        fulfillmentStatus: 'HANDED_OVER',
+        shipmentStatus: 'READY_TO_SHIP',
+        hasAwb: true,
+      }),
+    ).toMatchObject({ needsWork: true, bucket: 'sudahResi', hasAwb: true });
+  });
+
+  it('setelah kurir menjemput, pesanan HANDED_OVER keluar dari antrean', () => {
+    expect(
+      q({
+        externalStatus: 'PROCESSED',
+        fulfillmentStatus: 'HANDED_OVER',
+        shipmentStatus: 'PICKED_UP',
+        hasAwb: true,
+      }).needsWork,
+    ).toBe(false);
+  });
+
   it('tanpa status mentah (baris lama) memakai cadangan: resi menentukan kartu', () => {
     expect(q({ externalStatus: null, fulfillmentStatus: 'READY_TO_PICK' })).toMatchObject({
       needsWork: true,

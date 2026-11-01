@@ -68,11 +68,20 @@ export function classifyWorkQueue(input: WorkQueueInput): WorkQueueEntry {
     shipmentStatus: input.shipmentStatus,
   });
 
+  // Paket dianggap SUDAH keluar gudang hanya bila catatan KURIR mengatakan
+  // begitu. Status fulfillment `HANDED_OVER` saja TIDAK cukup: operator bisa
+  // sudah menyerahkan paket, tetapi kurir belum memindainya sehingga
+  // `shipment.status` masih `READY_TO_SHIP` dan Shopee masih `PROCESSED`.
+  //
+  // Bukti produksi (order 2610301FP9NBWQ, 2026-10-31): FO `HANDED_OVER`,
+  // shipment `READY_TO_SHIP`, Shopee `PROCESSED`. Versi lama mengeluarkannya
+  // dari antrean, sehingga pesanan ber-resi itu hilang dari kartu "Sudah Ada
+  // Resi" dan hanya muncul di kartu "Berisiko Terlambat" — angka tidak cocok
+  // dengan Seller Centre.
   const paketSudahJalan =
     input.shipmentStatus === 'PICKED_UP' ||
     input.shipmentStatus === 'IN_TRANSIT' ||
-    input.shipmentStatus === 'DELIVERED' ||
-    input.fulfillmentStatus === 'HANDED_OVER';
+    input.shipmentStatus === 'DELIVERED';
 
   const external = (input.externalStatus ?? '').trim().toUpperCase();
 
